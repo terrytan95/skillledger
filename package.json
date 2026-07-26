@@ -1,0 +1,44 @@
+{
+  "name": "skillledger",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A local-first control plane for global Agent Skills.",
+  "author": "Terry Tan",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "yarn@1.22.22",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "main": "dist-electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/terrytan95/skillledger.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "vitest run",
+    "build:app": "yarn typecheck && vite build",
+    "package": "yarn build:app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
+    "dist": "yarn build:app && electron-builder",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^1.27.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^6.0.4",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vite-plugin-electron": "^1.1.0",
+    "vitest": "^4.1.10"
+  }
+}
