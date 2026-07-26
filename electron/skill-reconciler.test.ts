@@ -509,7 +509,8 @@ describe('SkillReconciler', () => {
           tree: [{ path: 'SKILL.md', mode: '100644', type: 'blob', size: content.length, sha: blobSha }],
         })
       }
-      return json({ encoding: 'base64', content: content.toString('base64') })
+      if (input.startsWith('https://raw.githubusercontent.com/')) return new Response(content)
+      return new Response(null, { status: 404 })
     }
     const reconciler = new SkillReconciler({
       homeDir: home,

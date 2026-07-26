@@ -39,7 +39,15 @@ describe('stageGitHubSkill', () => {
     const destination = path.join(root, 'staged')
     const skillSha = blobSha(skill)
     const scriptSha = blobSha(script)
+    const requested: string[] = []
+    let activeDownloads = 0
+    let peakDownloads = 0
+    const rawSources = new Map([
+      [`https://raw.githubusercontent.com/example/skills/${'1'.repeat(40)}/skills/demo/SKILL.md`, skill],
+      [`https://raw.githubusercontent.com/example/skills/${'1'.repeat(40)}/skills/demo/scripts/run.sh`, script],
+    ])
     const fetchSource = async (input: string) => {
+      requested.push(input)
       if (input.endsWith('/git/commits/1111111111111111111111111111111111111111')) {
         return json({ sha: '1'.repeat(40), tree: { sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } })
       }
@@ -59,11 +67,13 @@ describe('stageGitHubSkill', () => {
           ],
         })
       }
-      if (input.endsWith(`/git/blobs/${skillSha}`)) {
-        return json({ encoding: 'base64', content: skill.toString('base64') })
-      }
-      if (input.endsWith(`/git/blobs/${scriptSha}`)) {
-        return json({ encoding: 'base64', content: script.toString('base64') })
+      const raw = rawSources.get(input)
+      if (raw) {
+        activeDownloads += 1
+        peakDownloads = Math.max(peakDownloads, activeDownloads)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        activeDownloads -= 1
+        return new Response(raw)
       }
       return json({}, 404)
     }
@@ -77,6 +87,9 @@ describe('stageGitHubSkill', () => {
 
     expect(await fingerprint(destination)).toEqual(expectedHash)
     expect(await readFile(path.join(destination, 'SKILL.md'), 'utf8')).toContain('name: demo')
+    expect(requested.filter((url) => url.startsWith('https://raw.githubusercontent.com/'))).toHaveLength(2)
+    expect(requested.some((url) => url.includes('/git/blobs/'))).toBe(false)
+    expect(peakDownloads).toBe(2)
   })
 
   it('rejects symlinks and removes the staging directory', async () => {
