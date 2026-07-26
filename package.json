@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run",
     "build:app": "yarn typecheck && vite build",
-    "package": "yarn build:app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
+    "package": "yarn build:app && electron-builder --dir -c.forceCodeSigning=false -c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.notarize=false",
+    "predist": "node script/verify-macos-release.mjs",
     "dist": "yarn build:app && electron-builder",
     "preview": "vite preview"
   },
