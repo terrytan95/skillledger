@@ -33,6 +33,8 @@ import type {
   ReconciliationPreview,
   SkillHealth,
   SkillRecord,
+  SourceUpdateEntry,
+  SourceUpdateSnapshot,
   TeamStatus,
 } from './types'
 import { localizeHealthReason, messages, type Language, type Messages } from './i18n'
@@ -135,10 +137,12 @@ function SkillInspector({
   skill,
   copy,
   language,
+  sourceUpdate,
 }: {
   skill: SkillRecord | undefined
   copy: Messages
   language: Language
+  sourceUpdate?: SourceUpdateEntry
 }) {
   if (!skill) return <div className="empty-inspector">{copy.noSkillMatches}</div>
   return (
@@ -154,8 +158,18 @@ function SkillInspector({
       <p className="inspector-description">{skill.description}</p>
       <dl className="fact-list">
         <div><dt>{copy.source}</dt><dd>{skill.source ?? copy.localOnly}</dd></div>
-        <div><dt>Source state</dt><dd>{skill.sourceState}</dd></div>
-        {skill.sourcePin && <div><dt>Pinned commit</dt><dd>{skill.sourcePin.revision.slice(0, 12)}</dd></div>}
+        <div><dt>{copy.sourceState}</dt><dd>{skill.sourceState}</dd></div>
+        {skill.sourcePin && <div><dt>{copy.pinnedCommit}</dt><dd>{skill.sourcePin.revision.slice(0, 12)}</dd></div>}
+        {sourceUpdate && (
+          <div>
+            <dt>{copy.latestCommit}</dt>
+            <dd>
+              {sourceUpdate.error
+                ? copy.sourceCheckFailed
+                : `${sourceUpdate.latestRevision?.slice(0, 12)} · ${sourceUpdate.available ? copy.sourceUpdateAvailable : copy.sourceCurrent}`}
+            </dd>
+          </div>
+        )}
         <div><dt>{copy.agentReach}</dt><dd>{skill.agents.length} {copy.destinations}</dd></div>
         <div><dt>{copy.installShape}</dt><dd>{skill.agents.some((agent) => agent.kind === 'copy') ? copy.mixed : copy.canonicalLinks}</dd></div>
         <div><dt>{copy.lastTracked}</dt><dd>{skill.updatedAt ? new Date(skill.updatedAt).toLocaleDateString(language) : copy.notTracked}</dd></div>
@@ -182,6 +196,7 @@ function LedgerView({
   onSelect,
   snapshot,
   scanError,
+  sourceUpdates,
   copy,
   language,
 }: {
@@ -190,6 +205,7 @@ function LedgerView({
   onSelect: (id: string) => void
   snapshot: InventorySnapshot
   scanError: string
+  sourceUpdates: Map<string, SourceUpdateEntry>
   copy: Messages
   language: Language
 }) {
@@ -230,7 +246,7 @@ function LedgerView({
           ))}
         </div>
       </section>
-      <SkillInspector skill={selected} copy={copy} language={language} />
+      <SkillInspector skill={selected} copy={copy} language={language} sourceUpdate={selected ? sourceUpdates.get(selected.id) : undefined} />
     </div>
   )
 }
@@ -716,6 +732,10 @@ export default function App() {
   const [appVersion, setAppVersion] = useState('—')
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle')
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null)
+  const [sourceUpdates, setSourceUpdates] = useState<SourceUpdateSnapshot | null>(null)
+  const [sourceCheckPhase, setSourceCheckPhase] = useState<UpdatePhase>('idle')
+  const [exportPhase, setExportPhase] = useState<'idle' | 'working'>('idle')
+  const [inventoryMessage, setInventoryMessage] = useState('')
   const automaticUpdateChecked = useRef(false)
   const language = resolveLanguage(preferences.language)
   const copy = messages[language]
@@ -727,6 +747,9 @@ export default function App() {
     try {
       const next = await window.skillLedger.scan()
       setSnapshot(next)
+      setSourceUpdates(null)
+      setSourceCheckPhase('idle')
+      setInventoryMessage('')
       setSelectedId((current) => next.skills.some((skill) => skill.id === current) ? current : next.skills[0]?.id ?? '')
       setLiveMode(true)
     } catch (error) {
@@ -748,6 +771,41 @@ export default function App() {
       setUpdatePhase('error')
     }
   }, [])
+
+  const checkSourceUpdates = async () => {
+    if (!window.skillLedger) return
+    setSourceCheckPhase('checking')
+    setInventoryMessage('')
+    try {
+      const result = await window.skillLedger.checkSourceUpdates()
+      setSourceUpdates(result)
+      setSourceCheckPhase('success')
+      setInventoryMessage(result.summary.failed
+        ? `${result.summary.failed} ${copy.sourceChecksFailed}`
+        : result.summary.available
+          ? `${result.summary.available} ${copy.sourceUpdatesFound}`
+          : copy.allSourcesCurrent)
+    } catch (error) {
+      setSourceCheckPhase('error')
+      setInventoryMessage(`${copy.sourceCheckFailed}: ${(error as Error).message}`)
+    }
+  }
+
+  const exportInventory = async () => {
+    if (!window.skillLedger) return
+    setExportPhase('working')
+    setInventoryMessage('')
+    try {
+      const result = await window.skillLedger.exportInventory()
+      if (result.status === 'exported') {
+        setInventoryMessage(`${copy.inventoryExported}: ${result.fileName}`)
+      }
+    } catch (error) {
+      setInventoryMessage(`${copy.exportFailed}: ${(error as Error).message}`)
+    } finally {
+      setExportPhase('idle')
+    }
+  }
 
   const setPreference = useCallback(<Key extends keyof Preferences>(key: Key, value: Preferences[Key]) => {
     setPreferences((current) => ({ ...current, [key]: value }))
@@ -795,6 +853,10 @@ export default function App() {
   }, [health, query, snapshot.skills])
 
   const selected = snapshot.skills.find((skill) => skill.id === selectedId) ?? skills[0]
+  const sourceUpdatesBySkill = useMemo(
+    () => new Map(sourceUpdates?.entries.map((entry) => [entry.skillId, entry]) ?? []),
+    [sourceUpdates],
+  )
 
   return (
     <div className={`app view-${view}`}>
@@ -812,6 +874,13 @@ export default function App() {
         {view === 'inventory' && (
           <div className="header-actions">
             <span className={`mode-badge ${liveMode ? 'live' : ''}`}>{liveMode ? copy.liveScan : copy.demoData}</span>
+            <span className="header-status" aria-live="polite">{inventoryMessage}</span>
+            <button className="secondary-button" onClick={() => void checkSourceUpdates()} disabled={!window.skillLedger || sourceCheckPhase === 'checking'}>
+              <GitBranch size={15} />{sourceCheckPhase === 'checking' ? copy.checkingSources : copy.checkSourceUpdates}
+            </button>
+            <button className="secondary-button" onClick={() => void exportInventory()} disabled={!window.skillLedger || exportPhase === 'working'}>
+              <Download size={15} />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
+            </button>
             <button className="secondary-button" onClick={() => setPlanOpen(true)}><SlidersHorizontal size={15} />{copy.previewPlan}</button>
             <button className="primary-button" onClick={() => void refresh()} disabled={!window.skillLedger || loading}>
               <RefreshCw size={15} className={loading ? 'spin' : ''} />{loading ? copy.scanning : copy.scanNow}
@@ -849,7 +918,7 @@ export default function App() {
       )}
 
       <main>
-        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} copy={copy} language={language} />}
+        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} sourceUpdates={sourceUpdatesBySkill} copy={copy} language={language} />}
         {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} />}
         {view === 'team' && <TeamView copy={copy} />}
         {view === 'settings' && (

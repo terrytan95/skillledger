@@ -151,15 +151,15 @@ docs/
 - [x] Pinned public GitHub restore and canonical drift replacement
 - [x] Retention-aware Activity ledger
 - [x] Shared Team policies, signed manifests, managed repositories, and approval rules
-- [ ] Default-branch update discovery for pinned sources
-- [ ] Reproducible inventory export
+- [x] Default-branch update discovery for pinned sources
+- [x] Reproducible inventory export
 
 ## Security
 
 - Local-first: no account, telemetry, or hosted service.
 - Electron context isolation and renderer sandbox are enabled.
 - Renderer navigation and new windows are denied.
-- IPC exposes narrow inventory, reconciliation, Activity, and Team-document methods and validates every sender and argument.
+- IPC exposes narrow inventory, source-check, export, reconciliation, Activity, and Team-document methods and validates every sender and argument.
 - The renderer submits opaque plan and journal IDs, never filesystem paths.
 - Stale plans and paths outside configured roots are rejected before mutation.
 - Existing content is hash-verified in a same-directory backup before replacement or restoration.

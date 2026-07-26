@@ -1,10 +1,13 @@
-import { app, BrowserWindow, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
+import { writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 import { checkForUpdates } from './app-update'
 import { defaultAgentLocations } from './skill-inventory'
+import { serializeInventoryExport } from './inventory-export'
 import { SkillReconciler } from './skill-reconciler'
+import { discoverGitHubSourceUpdates } from './skill-source'
 import { TeamManager } from './team-policy'
 import type { ReconcileRequest } from '../src/types'
 
@@ -14,6 +17,8 @@ const rendererDist = path.join(appRoot, 'dist')
 const preloadPath = path.join(appRoot, 'dist-electron', 'preload.mjs')
 const channels = {
   scan: 'skillledger:scan',
+  checkSourceUpdates: 'skillledger:source:check-updates',
+  exportInventory: 'skillledger:inventory:export',
   preview: 'skillledger:reconcile:preview',
   apply: 'skillledger:reconcile:apply',
   rollback: 'skillledger:reconcile:rollback',
@@ -58,6 +63,26 @@ function registerIpc(): void {
   ipcMain.handle(channels.scan, async (event) => {
     assertTrustedSender(event)
     return reconciler.scan()
+  })
+  ipcMain.handle(channels.checkSourceUpdates, async (event) => {
+    assertTrustedSender(event)
+    const snapshot = await reconciler.scan()
+    const pins = Object.fromEntries(
+      snapshot.skills.flatMap((skill) => skill.sourcePin ? [[skill.id, skill.sourcePin]] : []),
+    )
+    return discoverGitHubSourceUpdates(pins, net.fetch)
+  })
+  ipcMain.handle(channels.exportInventory, async (event) => {
+    assertTrustedSender(event)
+    const choice = await dialog.showSaveDialog({
+      title: 'Export reproducible inventory',
+      defaultPath: 'skillledger-inventory.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (choice.canceled || !choice.filePath) return { status: 'cancelled' }
+    const snapshot = await reconciler.scan()
+    await writeFile(choice.filePath, serializeInventoryExport(snapshot), { encoding: 'utf8', mode: 0o600 })
+    return { status: 'exported', fileName: path.basename(choice.filePath), skillCount: snapshot.skills.length }
   })
   ipcMain.handle(channels.preview, async (event, value: unknown) => {
     assertTrustedSender(event)

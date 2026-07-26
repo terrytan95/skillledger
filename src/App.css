@@ -41,6 +41,15 @@ button { border: 0; background: none; cursor: pointer; }
   content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; height: 2px; background: var(--accent);
 }
 .header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.header-status {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header-status:empty { display: none; }
 .mode-badge {
   padding: 5px 8px; border: 1px solid var(--line); color: var(--muted);
   font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
@@ -348,6 +357,7 @@ main { min-height: 0; overflow: hidden; }
 @media (max-width: 1120px) {
   .brand { min-width: 190px; }
   .brand small { display: none; }
+  .header-status, .mode-badge { display: none; }
   .ledger-layout { grid-template-columns: 180px minmax(360px, 1fr) 285px; }
 }
 

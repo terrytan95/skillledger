@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { fingerprint } from './path-fingerprint'
-import { stageGitHubSkill } from './skill-source'
+import { discoverGitHubSourceUpdates, stageGitHubSkill } from './skill-source'
 
 const temporaryDirectories: string[] = []
 
@@ -117,5 +117,65 @@ describe('stageGitHubSkill', () => {
       sha256: '2'.repeat(64),
     }, destination, fetchSource)).rejects.toThrow('unsupported entry')
     expect(await fingerprint(destination)).toMatchObject({ kind: 'missing' })
+  })
+})
+
+describe('discoverGitHubSourceUpdates', () => {
+  it('reports only default-branch changes inside each pinned source path', async () => {
+    let metadataRequests = 0
+    let headRequests = 0
+    const fetchSource = async (input: string) => {
+      if (input === 'https://api.github.com/repos/example/skills') {
+        metadataRequests += 1
+        return json({ default_branch: 'main' })
+      }
+      if (input.endsWith('/commits/main')) {
+        headRequests += 1
+        return json({ sha: '2'.repeat(40) })
+      }
+      if (input.endsWith(`/git/commits/${'1'.repeat(40)}`)) {
+        return json({ sha: '1'.repeat(40), tree: { sha: 'a'.repeat(40) } })
+      }
+      if (input.endsWith(`/git/commits/${'2'.repeat(40)}`)) {
+        return json({ sha: '2'.repeat(40), tree: { sha: 'd'.repeat(40) } })
+      }
+      if (input.endsWith(`/git/trees/${'a'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'b'.repeat(40) }] })
+      }
+      if (input.endsWith(`/git/trees/${'d'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'e'.repeat(40) }] })
+      }
+      if (input.endsWith(`/git/trees/${'b'.repeat(40)}`)) {
+        return json({ tree: [
+          { path: 'demo', mode: '040000', type: 'tree', sha: 'c'.repeat(40) },
+          { path: 'changed', mode: '040000', type: 'tree', sha: 'f'.repeat(40) },
+        ] })
+      }
+      if (input.endsWith(`/git/trees/${'e'.repeat(40)}`)) {
+        return json({ tree: [
+          { path: 'demo', mode: '040000', type: 'tree', sha: 'c'.repeat(40) },
+          { path: 'changed', mode: '040000', type: 'tree', sha: '9'.repeat(40) },
+        ] })
+      }
+      return json({}, 404)
+    }
+    const pin = {
+      repository: 'example/skills',
+      revision: '1'.repeat(40),
+      sha256: '3'.repeat(64),
+    }
+
+    const result = await discoverGitHubSourceUpdates({
+      demo: { ...pin, path: 'skills/demo' },
+      changed: { ...pin, path: 'skills/changed' },
+    }, fetchSource)
+
+    expect(result.entries).toMatchObject([
+      { skillId: 'changed', latestRevision: '2'.repeat(40), available: true, error: null },
+      { skillId: 'demo', latestRevision: '2'.repeat(40), available: false, error: null },
+    ])
+    expect(result.summary).toEqual({ checked: 2, available: 1, failed: 0 })
+    expect(metadataRequests).toBe(1)
+    expect(headRequests).toBe(1)
   })
 })
