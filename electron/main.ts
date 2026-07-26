@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 import { checkForUpdates } from './app-update'
-import { defaultAgentLocations, scanGlobalSkills } from './skill-inventory'
+import { defaultAgentLocations } from './skill-inventory'
 import { SkillReconciler } from './skill-reconciler'
 import { TeamManager } from './team-policy'
 import type { ReconcileRequest } from '../src/types'
@@ -57,7 +57,7 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 function registerIpc(): void {
   ipcMain.handle(channels.scan, async (event) => {
     assertTrustedSender(event)
-    return scanGlobalSkills({ sourcePins: await teamManager.sourcePins() })
+    return reconciler.scan()
   })
   ipcMain.handle(channels.preview, async (event, value: unknown) => {
     assertTrustedSender(event)

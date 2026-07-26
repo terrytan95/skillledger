@@ -51,6 +51,7 @@ interface StoredOperation {
 interface StoredPlan {
   preview: ReconciliationPreview
   operations: StoredOperation[]
+  expiresAt: number
 }
 
 interface JournalOperation extends StoredOperation {
@@ -63,6 +64,27 @@ interface JournalPlan {
   planId: string
   createdAt: string
   operations: JournalOperation[]
+}
+
+interface PlanReceipt {
+  status: 'applied' | 'rolled-back'
+  journalId: string
+  expiresAt: number
+}
+
+const TRANSIENT_TTL_MS = 30 * 60 * 1_000
+const MAX_TRANSIENT_ENTRIES = 500
+
+function pruneTransientEntries<Entry extends { expiresAt: number }>(entries: Map<string, Entry>): void {
+  const now = Date.now()
+  for (const [id, entry] of entries) {
+    if (entry.expiresAt <= now) entries.delete(id)
+  }
+  while (entries.size >= MAX_TRANSIENT_ENTRIES) {
+    const oldest = entries.keys().next().value
+    if (!oldest) break
+    entries.delete(oldest)
+  }
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -116,12 +138,13 @@ function isSourceOperation(
 
 export class SkillReconciler {
   private readonly plans = new Map<string, StoredPlan>()
-  private readonly planReceipts = new Map<string, { status: 'applied' | 'rolled-back'; journalId: string }>()
+  private readonly planReceipts = new Map<string, PlanReceipt>()
   private mutating = false
 
   constructor(private readonly options: SkillReconcilerOptions) {}
 
-  private async scan() {
+  async scan() {
+    await this.maintain()
     return scanGlobalSkills({
       ...this.options,
       sourcePins: await this.options.teamManager?.sourcePins(),
@@ -318,11 +341,18 @@ export class SkillReconciler {
       },
       warnings: [...warnings],
     }
-    this.plans.set(preview.planId, { preview, operations: storedOperations })
+    pruneTransientEntries(this.plans)
+    this.plans.set(preview.planId, {
+      preview,
+      operations: storedOperations,
+      expiresAt: Date.now() + TRANSIENT_TTL_MS,
+    })
     return preview
   }
 
   async apply(planId: string): Promise<ApplyResult> {
+    pruneTransientEntries(this.plans)
+    pruneTransientEntries(this.planReceipts)
     const receipt = this.planReceipts.get(planId)
     if (receipt?.status === 'applied') {
       return {
@@ -481,7 +511,7 @@ export class SkillReconciler {
       }
 
       await appendJournalEvent(journalDirectory, { status: 'verified' })
-      this.planReceipts.set(planId, { status: 'applied', journalId })
+      this.rememberReceipt(planId, 'applied', journalId)
       return {
         status: 'applied',
         planId,
@@ -499,7 +529,7 @@ export class SkillReconciler {
           error: { code: 'rollback-failed', phase: 'rollback', message: rollbackFailure.message },
         }
       }
-      this.planReceipts.set(planId, { status: 'rolled-back', journalId })
+      this.rememberReceipt(planId, 'rolled-back', journalId)
       return {
         status: 'rolled-back',
         planId,
@@ -625,10 +655,7 @@ export class SkillReconciler {
         })
       }
       await appendJournalEvent(directory, { status: 'rollback-complete', reason: 'startup-recovery' })
-      this.planReceipts.set(plan.planId, {
-        status: 'rolled-back',
-        journalId: plan.journalId,
-      })
+      this.rememberReceipt(plan.planId, 'rolled-back', plan.journalId)
       return true
     } catch (error) {
       await appendJournalEvent(directory, {
@@ -744,7 +771,7 @@ export class SkillReconciler {
         })
       }
       await appendJournalEvent(journalDirectory, { status: 'rollback-complete' })
-      this.planReceipts.set(plan.planId, { status: 'rolled-back', journalId })
+      this.rememberReceipt(plan.planId, 'rolled-back', journalId)
       return {
         status: 'rolled-back',
         journalId,
@@ -763,7 +790,7 @@ export class SkillReconciler {
     }
   }
 
-  async activity(): Promise<ActivitySnapshot> {
+  async maintain(): Promise<void> {
     if (!this.mutating) {
       this.mutating = true
       try {
@@ -772,6 +799,10 @@ export class SkillReconciler {
         this.mutating = false
       }
     }
+  }
+
+  async activity(): Promise<ActivitySnapshot> {
+    await this.maintain()
     return this.readActivity()
   }
 
@@ -811,6 +842,20 @@ export class SkillReconciler {
 
   private journalsRoot(): string {
     return path.join(this.options.homeDir, '.agents', '.skillledger', 'journals')
+  }
+
+  private rememberReceipt(
+    planId: string,
+    status: PlanReceipt['status'],
+    journalId: string,
+  ): void {
+    pruneTransientEntries(this.planReceipts)
+    this.planReceipts.set(planId, {
+      status,
+      journalId,
+      expiresAt: Date.now() + TRANSIENT_TTL_MS,
+    })
+    this.plans.delete(planId)
   }
 
   private async journalIds(): Promise<string[]> {

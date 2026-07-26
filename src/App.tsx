@@ -181,6 +181,7 @@ function LedgerView({
   selected,
   onSelect,
   snapshot,
+  scanError,
   copy,
   language,
 }: {
@@ -188,6 +189,7 @@ function LedgerView({
   selected: SkillRecord | undefined
   onSelect: (id: string) => void
   snapshot: InventorySnapshot
+  scanError: string
   copy: Messages
   language: Language
 }) {
@@ -211,6 +213,7 @@ function LedgerView({
           <div><p className="eyebrow">{copy.inventory}</p><h1>{skills.length} {copy.skills}</h1></div>
           <span className="quiet-copy">{copy.sortedByHealth}</span>
         </div>
+        {scanError && <div className="team-error" role="alert"><AlertTriangle size={16} /><p>{copy.scanFailed}: {scanError}</p></div>}
         <div className="skill-rows">
           {skills.map((skill) => (
             <button
@@ -238,16 +241,28 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1_024 / 1_024).toFixed(1)} MB`
 }
 
-function ActivityView({ onSnapshot }: { onSnapshot: (snapshot: InventorySnapshot) => void }) {
+function ActivityView({
+  onSnapshot,
+  copy,
+}: {
+  onSnapshot: (snapshot: InventorySnapshot) => void
+  copy: Messages
+}) {
   const [activity, setActivity] = useState<ActivitySnapshot>({
     retentionDays: 30,
     totalBackupBytes: 0,
     entries: [],
   })
   const [message, setMessage] = useState('')
+  const [loadError, setLoadError] = useState('')
   const load = useCallback(async () => {
     if (!window.skillLedger) return
-    setActivity(await window.skillLedger.reconcile.activity())
+    setLoadError('')
+    try {
+      setActivity(await window.skillLedger.reconcile.activity())
+    } catch (error) {
+      setLoadError((error as Error).message)
+    }
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -283,6 +298,7 @@ function ActivityView({ onSnapshot }: { onSnapshot: (snapshot: InventorySnapshot
       </div>
       <div className="policy-note"><ShieldCheck size={17} /><p>Verified backups expire after 30 days only when a newer successful journal exists for every affected skill. Incomplete, corrupt, and rollback-incomplete journals stay protected.</p></div>
       {message && <p className="workspace-message" aria-live="polite">{message}</p>}
+      {loadError && <div className="team-error" role="alert"><AlertTriangle size={16} /><p>{copy.activityLoadFailed}: {loadError}</p></div>}
       <div className="activity-list">
         {activity.entries.map((entry) => (
           <article className="activity-row" key={entry.journalId}>
@@ -296,18 +312,25 @@ function ActivityView({ onSnapshot }: { onSnapshot: (snapshot: InventorySnapshot
             </div>
           </article>
         ))}
-        {activity.entries.length === 0 && <p className="empty-workspace">No reconciliation journals yet.</p>}
+        {!loadError && activity.entries.length === 0 && <p className="empty-workspace">No reconciliation journals yet.</p>}
       </div>
     </section>
   )
 }
 
-function TeamView() {
+function TeamView({ copy }: { copy: Messages }) {
   const [team, setTeam] = useState<TeamStatus | null>(null)
   const [message, setMessage] = useState('')
+  const [loadError, setLoadError] = useState('')
 
   const load = useCallback(async () => {
-    if (window.skillLedger) setTeam(await window.skillLedger.team.status())
+    if (!window.skillLedger) return
+    setLoadError('')
+    try {
+      setTeam(await window.skillLedger.team.status())
+    } catch (error) {
+      setLoadError((error as Error).message)
+    }
   }, [])
   useEffect(() => { void load() }, [load])
 
@@ -344,6 +367,7 @@ function TeamView() {
         </article>
       </div>
       {message && <p className="workspace-message" aria-live="polite">{message}</p>}
+      {loadError && <div className="team-error" role="alert"><AlertTriangle size={16} /><p>{copy.teamLoadFailed}: {loadError}</p></div>}
       {team?.error && <div className="team-error"><AlertTriangle size={16} /><p>{team.error}</p></div>}
       <div className="team-detail-grid">
         <div><GitBranch size={15} /><span><strong>{team?.managedRepositories.length ?? 0}</strong> managed repositories</span></div>
@@ -684,6 +708,7 @@ export default function App() {
   const [health, setHealth] = useState<HealthFilter>('all')
   const [selectedId, setSelectedId] = useState(demoSnapshot.skills[0]?.id ?? '')
   const [loading, setLoading] = useState(false)
+  const [scanError, setScanError] = useState('')
   const [planOpen, setPlanOpen] = useState(false)
   const [liveMode, setLiveMode] = useState(false)
   const [view, setView] = useState<View>('inventory')
@@ -698,11 +723,14 @@ export default function App() {
   const refresh = useCallback(async () => {
     if (!window.skillLedger) return
     setLoading(true)
+    setScanError('')
     try {
       const next = await window.skillLedger.scan()
       setSnapshot(next)
       setSelectedId((current) => next.skills.some((skill) => skill.id === current) ? current : next.skills[0]?.id ?? '')
       setLiveMode(true)
+    } catch (error) {
+      setScanError((error as Error).message)
     } finally {
       setLoading(false)
     }
@@ -821,9 +849,9 @@ export default function App() {
       )}
 
       <main>
-        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} copy={copy} language={language} />}
-        {view === 'activity' && <ActivityView onSnapshot={setSnapshot} />}
-        {view === 'team' && <TeamView />}
+        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} copy={copy} language={language} />}
+        {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} />}
+        {view === 'team' && <TeamView copy={copy} />}
         {view === 'settings' && (
           <SettingsView
             preferences={preferences}
@@ -839,7 +867,15 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        <span><span className="footer-dot" />{copy.scanned} {new Date(snapshot.scannedAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</span>
+        {updatePhase === 'success' && updateInfo?.available ? (
+          <span className="footer-update">
+            <Download size={11} aria-hidden="true" />
+            {copy.updateAvailable}: {updateInfo.latestVersion}
+            <button onClick={() => void window.skillLedger?.openUpdatesPage()}>{copy.viewUpdate}<ExternalLink size={10} aria-hidden="true" /></button>
+          </span>
+        ) : (
+          <span><span className="footer-dot" />{copy.scanned} {new Date(snapshot.scannedAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</span>
+        )}
         <span>
           {snapshot.warnings.length
             ? `${snapshot.warnings.length} ${copy.scanWarnings}`
