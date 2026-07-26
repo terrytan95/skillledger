@@ -10,19 +10,21 @@ SkillLedger should remain easy to extend without making filesystem safety depend
 
 ```text
 React renderer
-  └─ window.skillLedger.scan()
+  └─ window.skillLedger.{scan,reconcile}
        └─ contextBridge preload
             └─ validated Electron IPC
-                 └─ inventory module
-                      ├─ ~/.agents/skills
-                      ├─ ~/.agents/.skill-lock.json
+                 ├─ inventory module
+                 └─ SkillReconciler
+                      ├─ in-memory, hash-bound plans
+                      ├─ ~/.agents/.skillledger/journals
                       └─ agent-specific skill directories
 ```
 
 - **Renderer:** presentation, filtering, selection, and plan preview. It never receives arbitrary filesystem access.
-- **Preload:** the smallest public API the UI needs.
+- **Preload:** the three-method reconciliation interface plus inventory scan.
 - **Main process:** window policy and sender validation.
 - **Inventory module:** pure discovery and health derivation, independently testable without Electron.
+- **Reconciliation module:** the deep module that hides hashing, preconditions, journal durability, atomic swaps, verification, and restoration behind `preview`, `apply`, and `rollback`.
 
 ## Domain model
 
@@ -34,17 +36,19 @@ The model records observed facts. It does not hide uncertainty: an untracked loc
 
 ## Safe mutation pipeline
 
-Write support should be added as one vertical slice, not as separate buttons:
+Write support is one vertical slice, not a collection of filesystem buttons:
 
-1. **Scan:** capture the current snapshot and content hashes.
-2. **Plan:** produce explicit operations (`link`, `replace`, `remove`, `update`) with preconditions.
-3. **Preview:** show every affected path and whether content will be preserved.
-4. **Journal:** save the plan, hashes, backups, and timestamp before mutation.
-5. **Apply:** use temporary paths and atomic renames where possible.
+1. **Hash:** capture deterministic SHA-256 tree fingerprints without following symlinks.
+2. **Plan:** produce explicit create-link, repair-link, or approved copy-replacement operations with preconditions.
+3. **Preview:** show the selected skill's affected destinations and preserve independent copies by default.
+4. **Journal:** persist the immutable plan and fsynced append-only events before destination writes.
+5. **Apply:** create sibling temporary links, hash-verify same-directory backups, and use same-volume renames.
 6. **Verify:** rescan and compare the expected postconditions.
 7. **Rollback:** restore from the same journal if verification fails.
 
-A plan becomes stale when any precondition changes; stale plans must be regenerated.
+A plan becomes stale when any canonical or destination fingerprint changes; stale plans must be regenerated. The renderer can submit only skill/Agent selectors and opaque IDs, never paths or operations.
+
+The filesystem cannot atomically commit a multi-destination transaction. SkillLedger therefore guarantees an atomic switch per destination plus deterministic reverse-order recovery for the whole plan.
 
 ## Extension seams
 
@@ -53,14 +57,14 @@ Add capabilities at these narrow seams:
 - New agent: append one `AgentLocation`.
 - New provenance source: normalize it into the existing lock entry fields.
 - New health rule: extend `deriveHealth` and its focused tests.
-- Write operation: add a plan type and one executor path; keep the renderer declarative.
+- Write operation: extend the internal plan and executor together; keep the three-method interface and renderer declarative.
 - Remote installer: adapt an external CLI behind the main process instead of reimplementing package resolution.
 
 Avoid a plugin system until a third-party extension actually needs one. A small typed registry is enough for built-in agents.
 
 ## Release discipline
 
-- Every pull request runs type checking, the focused inventory test, and a production build.
+- Every pull request runs type checking, filesystem seam tests, and a production build.
 - Filesystem mutation cannot ship without rollback coverage.
-- Schema changes should be versioned only when persisted journals exist.
+- Persisted journals carry a schema version and reject malformed or out-of-root paths.
 - Packaging and signing stay separate from the domain layer.
