@@ -154,6 +154,9 @@ main { min-height: 0; overflow: hidden; }
 }
 .app-footer span { display: flex; align-items: center; gap: 6px; }
 .footer-dot { width: 5px; height: 5px; border-radius: 50%; background: #4a7a5a; }
+.footer-update { color: var(--accent); }
+.footer-update button { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.footer-update button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .plan-backdrop { position: fixed; inset: 0; z-index: 20; background: var(--scrim); }
 .plan-panel {

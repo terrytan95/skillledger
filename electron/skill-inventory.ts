@@ -197,7 +197,7 @@ export async function scanGlobalSkills(options: ScanOptions = {}): Promise<Inven
       : discovered.filter((item): item is AgentPresence => item !== null)
     const lockEntry = lockEntries[skillName]
     const sourcePin = options.sourcePins?.[skillName] ?? normalizeSourcePin(lockEntry)
-    const canonicalFingerprint = canonicalExists ? await fingerprint(canonicalPath) : null
+    const canonicalFingerprint = canonicalExists && sourcePin ? await fingerprint(canonicalPath) : null
     const sourceState: SkillRecord['sourceState'] = !sourcePin
       ? 'local'
       : !canonicalExists
