@@ -155,11 +155,13 @@ main { min-height: 0; overflow: hidden; }
 .plan-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(30,31,29,.2); }
 .plan-panel {
   position: absolute; top: 0; right: 0; width: min(420px, 92vw); height: 100%; padding: 28px;
+  display: flex; flex-direction: column; box-sizing: border-box;
   border-left: 1px solid var(--line); background: #fbfaf7; box-shadow: -18px 0 40px rgba(32,34,31,.12);
 }
 .plan-title { display: flex; justify-content: space-between; align-items: start; }
 .plan-title h2 { margin: 4px 0 0; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); }
+.plan-scroll { min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
 .plan-summary { display: flex; align-items: baseline; gap: 9px; margin: 26px 0 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .plan-summary strong { font-family: Georgia, serif; font-size: 36px; font-weight: 500; }
 .plan-summary span { color: var(--muted); font-size: 10px; }
@@ -168,8 +170,20 @@ main { min-height: 0; overflow: hidden; }
 .plan-steps li > span { color: #9b9d97; font-family: ui-monospace, monospace; font-size: 9px; }
 .plan-steps strong { font-size: 11px; }
 .plan-steps p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
+.plan-empty { margin: 4px 0 20px; padding: 18px; background: #f1efe9; color: var(--muted); font-size: 10px; line-height: 1.5; text-align: center; }
+.plan-blockers { margin-top: 20px; }
+.plan-blockers > div { display: flex; gap: 9px; padding: 10px; border-top: 1px solid #e1cfc6; color: #8b493d; background: #f7ece8; }
+.plan-blockers p { display: grid; gap: 3px; margin: 0; font-size: 9px; line-height: 1.45; }
+.plan-blockers strong { font-size: 10px; }
+.copy-confirmation { display: flex; align-items: start; gap: 10px; margin-top: 14px; padding: 12px; border: 1px solid var(--line); background: #f7f5f0; cursor: pointer; }
+.copy-confirmation input { margin-top: 2px; accent-color: var(--accent); }
+.copy-confirmation span { display: grid; gap: 3px; }
+.copy-confirmation strong { font-size: 10px; }
+.copy-confirmation small { color: var(--muted); font-size: 9px; line-height: 1.4; }
 .plan-safety { display: flex; gap: 10px; margin: 22px 0; padding: 13px; background: #edf0ea; color: #526154; }
 .plan-safety p { margin: 0; font-size: 9px; line-height: 1.5; }
+.plan-message { margin: -10px 0 18px; padding: 10px; border-left: 2px solid var(--accent); background: #f1f3ed; color: #4d5c50; font-size: 9px; line-height: 1.5; }
+.plan-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

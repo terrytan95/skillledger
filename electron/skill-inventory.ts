@@ -9,7 +9,7 @@ import type {
   SkillRecord,
 } from '../src/types'
 
-interface AgentLocation {
+export interface AgentLocation {
   id: string
   label: string
   relativePath: string
@@ -26,7 +26,7 @@ interface LockFile {
   skills?: Record<string, LockEntry>
 }
 
-interface ScanOptions {
+export interface ScanOptions {
   homeDir?: string
   agentLocations?: AgentLocation[]
 }

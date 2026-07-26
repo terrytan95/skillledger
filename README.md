@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-315f47.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS-315f47.svg)](#development)
 
-SkillLedger is a local-first desktop control plane for global Agent Skills. It inventories the canonical `~/.agents/skills` library, traces each skill to its source and Agent destinations, and surfaces drift before anything touches disk.
+SkillLedger is a local-first desktop control plane for global Agent Skills. It inventories the canonical `~/.agents/skills` library, traces each skill to its source and Agent destinations, and safely reconciles selected skills through a previewed, journaled, reversible workflow.
 
 ![SkillLedger Ledger interface](docs/assets/skillledger-ledger.png)
 
@@ -20,7 +20,7 @@ Installing a skill is the easy part. Maintaining the same skill across multiple 
 - Has a destination drifted or broken?
 - What will a repair change, and can it be rolled back?
 
-SkillLedger is built around that maintenance loop. The current foundation performs real, read-only discovery; reconciliation remains preview-only until the operation journal and rollback path are complete.
+SkillLedger is built around that maintenance loop. Discovery stays read-only; selected changes can proceed only from a hash-bound preview through the journaled apply path.
 
 ## What works today
 
@@ -29,7 +29,11 @@ SkillLedger is built around that maintenance loop. The current foundation perfor
 - Inspects Codex, Claude Code, Cursor, Gemini CLI, Grok, OpenCode, and AiderDesk skill directories.
 - Distinguishes healthy links, independent copies, missing canonical content, and broken symlinks.
 - Provides search, health filters, inventory groups, source details, and Agent reach in the selected Ledger interface.
-- Previews a reconciliation plan without enabling unsafe writes.
+- Creates deterministic, SHA-256-bound plans for the selected skill.
+- Preserves independent copies unless replacement is explicitly approved.
+- Journals every approved plan before same-volume atomic filesystem swaps.
+- Verifies the resulting links and automatically rolls back failed applies.
+- Supports explicit rollback from the durable journal, including after the app module is recreated.
 - Uses representative demo data when the renderer runs in a normal browser.
 
 | Health | Meaning |
@@ -45,15 +49,17 @@ SkillLedger is built around that maintenance loop. The current foundation perfor
 Ledger interface
   └─ typed contextBridge API
        └─ validated Electron IPC
-            └─ inventory scanner
+            ├─ inventory scanner
                  ├─ ~/.agents/skills
                  ├─ ~/.agents/.skill-lock.json
                  └─ Agent-specific skill directories
+            └─ reconciliation module
+                 └─ preview → journal → atomic apply → verify → rollback
 ```
 
 The renderer has no direct filesystem or Node.js access. Discovery lives in a small inventory module that can be tested without Electron.
 
-Future writes follow one rule:
+Writes follow one rule:
 
 ```text
 scan → hash → plan → preview → journal → apply → verify → rollback
@@ -99,6 +105,7 @@ electron/
   main.ts                 Window policy and validated IPC
   preload.ts              Minimal renderer bridge
   skill-inventory.ts      Filesystem discovery and health rules
+  skill-reconciler.ts     Hash-bound planning, journaling, apply, and rollback
 src/
   App.tsx                 Ledger workflow and interaction state
   App.css                 Ledger visual system
@@ -113,10 +120,10 @@ docs/
 - [x] Canonical library and Agent destination discovery
 - [x] Provenance-aware health classification
 - [x] Ledger interface and safe plan preview
-- [ ] Content hashes and drift details
-- [ ] Deterministic dry-run plans
-- [ ] Append-only operation journal
-- [ ] Atomic apply, verification, and rollback
+- [x] Content hashes and drift preconditions
+- [x] Deterministic dry-run plans
+- [x] Append-only operation journal
+- [x] Atomic apply, verification, and rollback
 - [ ] GitHub update checks and pinned versions
 - [ ] Reproducible inventory export and restore
 
@@ -125,8 +132,10 @@ docs/
 - Local-first: no account, telemetry, or hosted service.
 - Electron context isolation and renderer sandbox are enabled.
 - Renderer navigation and new windows are denied.
-- IPC exposes one narrow scan method and validates its sender.
-- Filesystem mutation will not ship without preview, journaling, verification, and rollback.
+- IPC exposes narrow scan, preview, apply, and rollback methods and validates every sender and argument.
+- The renderer submits opaque plan and journal IDs, never filesystem paths.
+- Stale plans and paths outside configured roots are rejected before mutation.
+- Existing content is hash-verified in a same-directory backup before replacement or restoration.
 
 Please report vulnerabilities through the repository's private GitHub Security Advisories. See [SECURITY.md](SECURITY.md).
 
