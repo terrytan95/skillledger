@@ -42,7 +42,20 @@ import './App.css'
 type HealthFilter = SkillHealth | 'all'
 type View = 'inventory' | 'activity' | 'team' | 'settings'
 type ThemeMode = 'system' | 'light' | 'dark'
-type Accent = 'forest' | 'ocean' | 'violet' | 'amber' | 'rose'
+type Accent =
+  | 'forest'
+  | 'ocean'
+  | 'violet'
+  | 'amber'
+  | 'rose'
+  | 'mist-pine'
+  | 'haze-blue'
+  | 'red-bean'
+  | 'clay-blush'
+  | 'moss'
+  | 'smoky-violet'
+  | 'stone-taupe'
+  | 'lake-teal'
 type LanguagePreference = 'system' | Language
 type UpdatePhase = 'idle' | 'checking' | 'success' | 'error'
 
@@ -55,7 +68,21 @@ interface Preferences {
 
 const preferenceKey = 'skillledger:preferences'
 const themeModes: ThemeMode[] = ['system', 'light', 'dark']
-const accents: Accent[] = ['forest', 'ocean', 'violet', 'amber', 'rose']
+const accents: Accent[] = [
+  'forest',
+  'ocean',
+  'violet',
+  'amber',
+  'rose',
+  'mist-pine',
+  'haze-blue',
+  'red-bean',
+  'clay-blush',
+  'moss',
+  'smoky-violet',
+  'stone-taupe',
+  'lake-teal',
+]
 const languages: LanguagePreference[] = ['system', 'en', 'zh-CN']
 const defaultPreferences: Preferences = {
   theme: 'system',
@@ -531,6 +558,14 @@ function SettingsView({
     violet: copy.violet,
     amber: copy.amber,
     rose: copy.rose,
+    'mist-pine': copy.mistPine,
+    'haze-blue': copy.hazeBlue,
+    'red-bean': copy.redBean,
+    'clay-blush': copy.clayBlush,
+    moss: copy.moss,
+    'smoky-violet': copy.smokyViolet,
+    'stone-taupe': copy.stoneTaupe,
+    'lake-teal': copy.lakeTeal,
   }
 
   return (
