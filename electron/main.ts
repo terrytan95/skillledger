@@ -1,13 +1,25 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 import path from 'node:path'
-import { scanGlobalSkills } from './skill-inventory'
+import { defaultAgentLocations, scanGlobalSkills } from './skill-inventory'
+import { SkillReconciler } from './skill-reconciler'
+import type { ReconcileRequest } from '../src/types'
 
 const appRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const devServerUrl = process.env['VITE_DEV_SERVER_URL']
 const rendererDist = path.join(appRoot, 'dist')
 const preloadPath = path.join(appRoot, 'dist-electron', 'preload.mjs')
-const scanChannel = 'skillledger:scan'
+const channels = {
+  scan: 'skillledger:scan',
+  preview: 'skillledger:reconcile:preview',
+  apply: 'skillledger:reconcile:apply',
+  rollback: 'skillledger:reconcile:rollback',
+} as const
+const reconciler = new SkillReconciler({
+  homeDir: os.homedir(),
+  agentLocations: defaultAgentLocations,
+})
 
 function isTrustedSender(rawUrl: string): boolean {
   try {
@@ -20,12 +32,72 @@ function isTrustedSender(rawUrl: string): boolean {
 }
 
 function registerIpc(): void {
-  ipcMain.handle(scanChannel, async (event) => {
+  const assertTrusted = (event: Electron.IpcMainInvokeEvent): void => {
     if (!event.senderFrame || !isTrustedSender(event.senderFrame.url)) {
       throw new Error('Untrusted IPC sender')
     }
+  }
+
+  ipcMain.handle(channels.scan, async (event) => {
+    assertTrusted(event)
     return scanGlobalSkills()
   })
+  ipcMain.handle(channels.preview, async (event, value: unknown) => {
+    assertTrusted(event)
+    return reconciler.preview(parseReconcileRequest(value))
+  })
+  ipcMain.handle(channels.apply, async (event, value: unknown) => {
+    assertTrusted(event)
+    return reconciler.apply(parseOpaqueId(value))
+  })
+  ipcMain.handle(channels.rollback, async (event, value: unknown) => {
+    assertTrusted(event)
+    return reconciler.rollback(parseOpaqueId(value))
+  })
+}
+
+function parseOpaqueId(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  ) {
+    throw new Error('Invalid reconciliation identifier')
+  }
+  return value
+}
+
+function parseReconcileRequest(value: unknown): ReconcileRequest {
+  if (value === undefined) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid reconciliation request')
+  }
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).some((key) => !['skillIds', 'agentIds', 'copyPolicy'].includes(key))) {
+    throw new Error('Invalid reconciliation request')
+  }
+  const parseIds = (ids: unknown): string[] | undefined => {
+    if (ids === undefined) return undefined
+    if (
+      !Array.isArray(ids)
+      || ids.length > 1_000
+      || ids.some((id) => typeof id !== 'string' || !id || id.length > 256 || id.includes('\0'))
+    ) {
+      throw new Error('Invalid reconciliation request')
+    }
+    return ids as string[]
+  }
+  if (
+    record.copyPolicy !== undefined
+    && record.copyPolicy !== 'preserve'
+    && record.copyPolicy !== 'replace-with-symlink'
+  ) {
+    throw new Error('Invalid reconciliation request')
+  }
+  return {
+    skillIds: parseIds(record.skillIds),
+    agentIds: parseIds(record.agentIds),
+    copyPolicy: record.copyPolicy as ReconcileRequest['copyPolicy'],
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -56,15 +128,22 @@ function createWindow(): BrowserWindow {
   return window
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
-})
-
-app.whenReady().then(() => {
-  registerIpc()
-  createWindow()
-})
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const [window] = BrowserWindow.getAllWindows()
+    if (window?.isMinimized()) window.restore()
+    window?.focus()
+  })
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+  app.whenReady().then(() => {
+    registerIpc()
+    createWindow()
+  })
+}
