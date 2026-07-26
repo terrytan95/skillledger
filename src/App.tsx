@@ -41,7 +41,7 @@ import { localizeHealthReason, messages, type Language, type Messages } from './
 import { demoSnapshot } from './demo'
 import './App.css'
 
-type HealthFilter = SkillHealth | 'all'
+type HealthFilter = SkillHealth | 'all' | 'needs-review'
 type View = 'inventory' | 'activity' | 'team' | 'settings'
 type ThemeMode = 'system' | 'light' | 'dark'
 type Accent =
@@ -145,6 +145,12 @@ function SkillInspector({
   sourceUpdate?: SourceUpdateEntry
 }) {
   if (!skill) return <div className="empty-inspector">{copy.noSkillMatches}</div>
+  const sourceState = {
+    local: copy.sourceLocal,
+    pinned: copy.sourcePinned,
+    drifted: copy.sourceDrifted,
+    missing: copy.sourceMissing,
+  }[skill.sourceState]
   return (
     <aside className="skill-inspector" aria-label={copy.selectedSkillDetails}>
       <div className="inspector-heading">
@@ -158,7 +164,7 @@ function SkillInspector({
       <p className="inspector-description">{skill.description}</p>
       <dl className="fact-list">
         <div><dt>{copy.source}</dt><dd>{skill.source ?? copy.localOnly}</dd></div>
-        <div><dt>{copy.sourceState}</dt><dd>{skill.sourceState}</dd></div>
+        <div><dt>{copy.sourceState}</dt><dd>{sourceState}</dd></div>
         {skill.sourcePin && <div><dt>{copy.pinnedCommit}</dt><dd>{skill.sourcePin.revision.slice(0, 12)}</dd></div>}
         {sourceUpdate && (
           <div>
@@ -197,6 +203,8 @@ function LedgerView({
   snapshot,
   scanError,
   sourceUpdates,
+  health,
+  onHealth,
   copy,
   language,
 }: {
@@ -206,6 +214,8 @@ function LedgerView({
   snapshot: InventorySnapshot
   scanError: string
   sourceUpdates: Map<string, SourceUpdateEntry>
+  health: HealthFilter
+  onHealth: (health: HealthFilter) => void
   copy: Messages
   language: Language
 }) {
@@ -215,9 +225,9 @@ function LedgerView({
         <p className="eyebrow">{copy.library}</p>
         <h2>{copy.globalSkills}</h2>
         <nav aria-label={copy.inventoryGroups}>
-          <button className="rail-item active"><Boxes size={16} />{copy.allSkills} <span>{snapshot.summary.total}</span></button>
-          <button className="rail-item"><ShieldCheck size={16} />{copy.healthy} <span>{snapshot.summary.healthy}</span></button>
-          <button className="rail-item"><AlertTriangle size={16} />{copy.needsReview} <span>{snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken}</span></button>
+          <button className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}><Boxes size={16} />{copy.allSkills} <span>{snapshot.summary.total}</span></button>
+          <button className={`rail-item ${health === 'healthy' ? 'active' : ''}`} aria-current={health === 'healthy' ? 'page' : undefined} onClick={() => onHealth('healthy')}><ShieldCheck size={16} />{copy.healthy} <span>{snapshot.summary.healthy}</span></button>
+          <button className={`rail-item ${health === 'needs-review' ? 'active' : ''}`} aria-current={health === 'needs-review' ? 'page' : undefined} onClick={() => onHealth('needs-review')}><AlertTriangle size={16} />{copy.needsReview} <span>{snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken}</span></button>
         </nav>
         <div className="rail-source">
           <span className="section-label">{copy.sourceOfTruth}</span>
@@ -239,7 +249,7 @@ function LedgerView({
             >
               <span className={`health-dot status-${skill.health}`} aria-hidden="true" />
               <span className="row-main"><strong>{skill.name}</strong><small>{skill.description}</small></span>
-              <span className="row-source">{skill.sourceType ?? 'local'}</span>
+              <span className="row-source">{skill.sourceType ?? copy.localOnly}</span>
               <span className="row-count">{skill.agents.length}</span>
               <ArrowRight size={15} aria-hidden="true" />
             </button>
@@ -260,9 +270,11 @@ function formatBytes(bytes: number): string {
 function ActivityView({
   onSnapshot,
   copy,
+  language,
 }: {
   onSnapshot: (snapshot: InventorySnapshot) => void
   copy: Messages
+  language: Language
 }) {
   const [activity, setActivity] = useState<ActivitySnapshot>({
     retentionDays: 30,
@@ -285,50 +297,67 @@ function ActivityView({
 
   const rollback = async (journalId: string) => {
     if (!window.skillLedger) return
-    const result = await window.skillLedger.reconcile.rollback(journalId)
-    if (result.status === 'rolled-back' || result.status === 'already-rolled-back') {
-      onSnapshot(result.snapshot)
-      setMessage(result.status === 'rolled-back' ? 'Rollback completed and verified.' : 'This journal was already rolled back.')
-    } else {
-      setMessage(result.error.message)
+    try {
+      const result = await window.skillLedger.reconcile.rollback(journalId)
+      if (result.status === 'rolled-back' || result.status === 'already-rolled-back') {
+        onSnapshot(result.snapshot)
+        setMessage(result.status === 'rolled-back' ? copy.rollbackCompleted : copy.journalAlreadyRolledBack)
+      } else {
+        setMessage(result.error.message)
+      }
+      await load()
+    } catch (error) {
+      setMessage((error as Error).message)
     }
-    await load()
   }
 
   const discard = async (journalId: string) => {
     if (!window.skillLedger) return
-    const result = await window.skillLedger.reconcile.discard(journalId)
-    if (result.status === 'rejected') {
-      setMessage(result.error.message)
-    } else {
-      setActivity(result.activity)
-      setMessage(result.status === 'discarded' ? 'Rollback data discarded; audit events were retained.' : 'Rollback data was already discarded.')
+    try {
+      const result = await window.skillLedger.reconcile.discard(journalId)
+      if (result.status === 'rejected') {
+        setMessage(result.error.message)
+      } else {
+        setActivity(result.activity)
+        setMessage(result.status === 'discarded' ? copy.rollbackDataDiscarded : copy.rollbackDataAlreadyDiscarded)
+      }
+    } catch (error) {
+      setMessage((error as Error).message)
     }
   }
 
+  const statusLabels: Record<ActivitySnapshot['entries'][number]['status'], string> = {
+    verified: copy.verified,
+    'rolled-back': copy.rolledBack,
+    discarded: copy.discarded,
+    incomplete: copy.incomplete,
+    'rollback-incomplete': copy.rollbackIncomplete,
+    corrupt: copy.corrupt,
+  }
+
   return (
-    <section className="workspace-view" aria-label="Reconciliation activity">
+    <section className="workspace-view" aria-label={copy.reconciliationActivity}>
       <div className="workspace-heading">
-        <div><p className="eyebrow">Recovery ledger</p><h1>Activity</h1></div>
-        <div className="metric-card"><HardDrive size={16} /><strong>{formatBytes(activity.totalBackupBytes)}</strong><span>rollback data</span></div>
+        <div><p className="eyebrow">{copy.recoveryLedger}</p><h1>{copy.activity}</h1></div>
+        <div className="metric-card"><HardDrive size={16} /><strong>{formatBytes(activity.totalBackupBytes)}</strong><span>{copy.rollbackData}</span></div>
       </div>
-      <div className="policy-note"><ShieldCheck size={17} /><p>Verified backups expire after 30 days only when a newer successful journal exists for every affected skill. Incomplete, corrupt, and rollback-incomplete journals stay protected.</p></div>
+      <div className="policy-note"><ShieldCheck size={17} /><p>{copy.retentionPolicy}</p></div>
       {message && <p className="workspace-message" aria-live="polite">{message}</p>}
       {loadError && <div className="team-error" role="alert"><AlertTriangle size={16} /><p>{copy.activityLoadFailed}: {loadError}</p></div>}
       <div className="activity-list">
         {activity.entries.map((entry) => (
           <article className="activity-row" key={entry.journalId}>
-            <div className={`activity-status status-${entry.status}`}><span />{entry.status}</div>
-            <div><strong>{entry.skillIds.join(', ') || 'Unreadable journal'}</strong><small>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : entry.journalId}</small></div>
+            <div className={`activity-status status-${entry.status}`}><span />{statusLabels[entry.status]}</div>
+            <div><strong>{entry.skillIds.join(', ') || copy.unreadableJournal}</strong><small>{entry.createdAt ? new Date(entry.createdAt).toLocaleString(language) : entry.journalId}</small></div>
             <div className="activity-size">{formatBytes(entry.backupBytes)}</div>
             <div className="row-actions">
-              {entry.rollbackAvailable && <button className="secondary-button" onClick={() => void rollback(entry.journalId)}>Rollback</button>}
-              {entry.rollbackAvailable && <button className="icon-button" onClick={() => void discard(entry.journalId)} aria-label={`Discard rollback for ${entry.skillIds.join(', ')}`}><Trash2 size={14} /></button>}
-              {entry.protected && <span className="protected-label">Protected</span>}
+              {entry.rollbackAvailable && <button className="secondary-button" onClick={() => void rollback(entry.journalId)}>{copy.rollback}</button>}
+              {entry.rollbackAvailable && <button className="icon-button" onClick={() => void discard(entry.journalId)} aria-label={`${copy.discardRollback}: ${entry.skillIds.join(', ')}`}><Trash2 size={14} /></button>}
+              {entry.protected && <span className="protected-label">{copy.protected}</span>}
             </div>
           </article>
         ))}
-        {!loadError && activity.entries.length === 0 && <p className="empty-workspace">No reconciliation journals yet.</p>}
+        {!loadError && activity.entries.length === 0 && <p className="empty-workspace">{copy.noJournals}</p>}
       </div>
     </section>
   )
@@ -352,43 +381,48 @@ function TeamView({ copy }: { copy: Messages }) {
 
   const importDocument = async (file: File | undefined, kind: 'policy' | 'manifest') => {
     if (!file || !window.skillLedger) return
-    const json = await file.text()
-    const result = kind === 'policy'
-      ? await window.skillLedger.team.importPolicy(json)
-      : await window.skillLedger.team.importManifest(json)
-    setTeam(result.team)
-    setMessage(result.status === 'imported'
-      ? `${kind === 'policy' ? 'Shared policy' : 'Signed manifest'} imported.`
-      : result.message)
+    setMessage('')
+    try {
+      const json = await file.text()
+      const result = kind === 'policy'
+        ? await window.skillLedger.team.importPolicy(json)
+        : await window.skillLedger.team.importManifest(json)
+      setTeam(result.team)
+      setMessage(result.status === 'imported'
+        ? kind === 'policy' ? copy.policyImported : copy.manifestImported
+        : result.message)
+    } catch (error) {
+      setMessage((error as Error).message)
+    }
   }
 
   return (
-    <section className="workspace-view" aria-label="Team controls">
+    <section className="workspace-view" aria-label={copy.teamControls}>
       <div className="workspace-heading">
-        <div><p className="eyebrow">Local trust plane</p><h1>Team</h1></div>
-        <span className={`team-state ${team?.enabled && !team.error ? 'ready' : ''}`}>{team?.enabled ? (team.error ? 'Needs manifest' : 'Enforced') : 'Personal mode'}</span>
+        <div><p className="eyebrow">{copy.localTrustPlane}</p><h1>{copy.team}</h1></div>
+        <span className={`team-state ${team?.enabled && !team.error ? 'ready' : ''}`}>{team?.enabled ? (team.error ? copy.needsManifest : copy.enforced) : copy.personalMode}</span>
       </div>
       <div className="team-grid">
         <article className="team-card">
           <FileCheck2 size={19} />
-          <div><p className="eyebrow">Shared policy</p><h2>{team?.name ?? 'No team policy'}</h2></div>
-          <p>Defines trusted Ed25519 signers, managed GitHub repositories, and minimum approval roles.</p>
-          <label className="secondary-button upload-button"><Upload size={14} />Import policy<input type="file" accept="application/json,.json" onChange={(event) => { void importDocument(event.target.files?.[0], 'policy'); event.target.value = '' }} /></label>
+          <div><p className="eyebrow">{copy.sharedPolicy}</p><h2>{team?.name ?? copy.noTeamPolicy}</h2></div>
+          <p>{copy.sharedPolicyDescription}</p>
+          <label className="secondary-button upload-button"><Upload size={14} />{copy.importPolicy}<input type="file" accept="application/json,.json" onChange={(event) => { void importDocument(event.target.files?.[0], 'policy'); event.target.value = '' }} /></label>
         </article>
         <article className="team-card">
           <ShieldCheck size={19} />
-          <div><p className="eyebrow">Signed manifest</p><h2>{team?.signerId ?? 'Not verified'}</h2></div>
-          <p>Pins exact commits and content hashes, then grants scoped restore, update, or copy-replacement approvals.</p>
-          <label className="secondary-button upload-button"><Upload size={14} />Import manifest<input type="file" accept="application/json,.json" onChange={(event) => { void importDocument(event.target.files?.[0], 'manifest'); event.target.value = '' }} /></label>
+          <div><p className="eyebrow">{copy.signedManifest}</p><h2>{team?.signerId ?? copy.notVerified}</h2></div>
+          <p>{copy.signedManifestDescription}</p>
+          <label className="secondary-button upload-button"><Upload size={14} />{copy.importManifest}<input type="file" accept="application/json,.json" onChange={(event) => { void importDocument(event.target.files?.[0], 'manifest'); event.target.value = '' }} /></label>
         </article>
       </div>
       {message && <p className="workspace-message" aria-live="polite">{message}</p>}
       {loadError && <div className="team-error" role="alert"><AlertTriangle size={16} /><p>{copy.teamLoadFailed}: {loadError}</p></div>}
       {team?.error && <div className="team-error"><AlertTriangle size={16} /><p>{team.error}</p></div>}
       <div className="team-detail-grid">
-        <div><GitBranch size={15} /><span><strong>{team?.managedRepositories.length ?? 0}</strong> managed repositories</span></div>
-        <div><Users size={15} /><span><strong>{team?.signerRoles.join(', ') || 'No'}</strong> signer role</span></div>
-        <div><Boxes size={15} /><span><strong>{team?.manifestSkillCount ?? 0}</strong> manifest skills</span></div>
+        <div><GitBranch size={15} /><span><strong>{team?.managedRepositories.length ?? 0}</strong> {copy.managedRepositories}</span></div>
+        <div><Users size={15} /><span><strong>{team?.signerRoles.map((role) => role === 'owner' ? copy.owner : copy.maintainer).join(', ') || copy.noSignerRole}</strong> {copy.signerRole}</span></div>
+        <div><Boxes size={15} /><span><strong>{team?.manifestSkillCount ?? 0}</strong> {copy.manifestSkills}</span></div>
       </div>
       {team?.managedRepositories.map((managed) => (
         <div className="managed-repo" key={managed.repository}>
@@ -396,7 +430,7 @@ function TeamView({ copy }: { copy: Messages }) {
           <span>{managed.paths.join(' · ')}</span>
         </div>
       ))}
-      <div className="policy-note"><ShieldCheck size={17} /><p>Private keys never enter SkillLedger. Import is local; source operations are blocked unless the installed manifest signature, managed path, signer role, and explicit action approval all match.</p></div>
+      <div className="policy-note"><ShieldCheck size={17} /><p>{copy.teamSecurity}</p></div>
     </section>
   )
 }
@@ -492,8 +526,8 @@ function PlanPanel({
     'create-symlink': copy.createAgentLink,
     'repair-symlink': copy.repairBrokenLink,
     'replace-copy': copy.replaceIndependentCopy,
-    'restore-canonical': 'Restore pinned source',
-    'update-canonical': 'Replace canonical drift',
+    'restore-canonical': copy.restorePinnedSource,
+    'update-canonical': copy.replaceCanonicalDrift,
   } as const
   const changeCount = preview?.operations.length ?? 0
   const copyBlockers = preview?.blockers.filter((blocker) => blocker.code === 'copy-requires-confirmation').length ?? 0
@@ -513,7 +547,7 @@ function PlanPanel({
               {preview.operations.map((operation, index) => (
                 <li key={operation.id}>
                   <span>{String(index + 1).padStart(2, '0')}</span>
-                  <div><strong>{operationLabel[operation.kind]}</strong><p>{operation.skillId} · {operation.agentId}</p></div>
+                  <div><strong>{operationLabel[operation.kind]}</strong><p>{operation.skillId} · {operation.agentId}</p><code>{operation.targetPath}</code></div>
                 </li>
               ))}
             </ol>
@@ -522,7 +556,7 @@ function PlanPanel({
             <div className="plan-blockers">
               <span className="section-label">{copy.needsDecision}</span>
               {preview.blockers.map((blocker) => (
-                <div key={`${blocker.skillId}-${blocker.agentId}`}><AlertTriangle size={14} /><p><strong>{blocker.skillId} · {blocker.agentId}</strong>{blocker.message}</p></div>
+                <div key={`${blocker.skillId}-${blocker.agentId ?? 'universal'}`}><AlertTriangle size={14} /><p><strong>{blocker.skillId}{blocker.agentId ? ` · ${blocker.agentId}` : ''}</strong>{blocker.message}</p></div>
               ))}
             </div>
           ) : null}
@@ -551,10 +585,10 @@ function PlanPanel({
                   void loadPreview(replaceCopies, checked)
                 }}
               />
-              <span><strong>Use the pinned GitHub source</strong><small>Download the exact commit, verify its SHA-256 tree, and atomically restore or update canonical content.</small></span>
+              <span><strong>{copy.usePinnedSource}</strong><small>{copy.usePinnedSourceDescription}</small></span>
             </label>
           ) : null}
-          <div className="plan-safety"><ShieldCheck size={18} /><p>Every plan is bound to SHA-256 preconditions. Journal and backups are durable before same-volume atomic swaps; failed verification rolls back automatically.</p></div>
+          <div className="plan-safety"><ShieldCheck size={18} /><p>{copy.planSafety}</p></div>
           {message && <p className="plan-message" aria-live="polite">{message}</p>}
         </div>
         <div className="plan-actions">
@@ -737,6 +771,7 @@ export default function App() {
   const [exportPhase, setExportPhase] = useState<'idle' | 'working'>('idle')
   const [inventoryMessage, setInventoryMessage] = useState('')
   const automaticUpdateChecked = useRef(false)
+  const searchInput = useRef<HTMLInputElement>(null)
   const language = resolveLanguage(preferences.language)
   const copy = messages[language]
 
@@ -840,10 +875,25 @@ export default function App() {
     void checkUpdates()
   }, [checkUpdates, preferences.automaticUpdates])
 
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
+      event.preventDefault()
+      setView('inventory')
+      requestAnimationFrame(() => {
+        searchInput.current?.focus()
+        searchInput.current?.select()
+      })
+    }
+    window.addEventListener('keydown', focusSearch)
+    return () => window.removeEventListener('keydown', focusSearch)
+  }, [])
+
   const skills = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return snapshot.skills.filter((skill) => {
-      const matchesHealth = health === 'all' || skill.health === health
+      const matchesHealth = health === 'all'
+        || (health === 'needs-review' ? skill.health !== 'healthy' : skill.health === health)
       const matchesQuery = !normalized || `${skill.name} ${skill.description} ${skill.source ?? ''}`.toLowerCase().includes(normalized)
       return matchesHealth && matchesQuery
     }).sort((a, b) => {
@@ -852,7 +902,7 @@ export default function App() {
     })
   }, [health, query, snapshot.skills])
 
-  const selected = snapshot.skills.find((skill) => skill.id === selectedId) ?? skills[0]
+  const selected = skills.find((skill) => skill.id === selectedId) ?? skills[0]
   const sourceUpdatesBySkill = useMemo(
     () => new Map(sourceUpdates?.entries.map((entry) => [entry.skillId, entry]) ?? []),
     [sourceUpdates],
@@ -867,8 +917,8 @@ export default function App() {
         </div>
         <nav className="primary-nav" aria-label={copy.primaryNavigation}>
           <button className={view === 'inventory' ? 'active' : ''} onClick={() => setView('inventory')}><Boxes size={16} />{copy.inventory}</button>
-          <button className={view === 'activity' ? 'active' : ''} onClick={() => setView('activity')}><Activity size={16} />Activity</button>
-          <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}><Users size={16} />Team</button>
+          <button className={view === 'activity' ? 'active' : ''} onClick={() => setView('activity')}><Activity size={16} />{copy.activity}</button>
+          <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}><Users size={16} />{copy.team}</button>
           <button className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Settings size={16} />{copy.settings}</button>
         </nav>
         {view === 'inventory' && (
@@ -894,14 +944,14 @@ export default function App() {
           <div className="control-context">
             {view === 'inventory' ? <Boxes size={16} aria-hidden="true" /> : view === 'activity' ? <Activity size={16} aria-hidden="true" /> : <Users size={16} aria-hidden="true" />}
             <span>
-              <strong>{view === 'inventory' ? copy.globalInventory : view === 'activity' ? 'Recovery history' : 'Team governance'}</strong>
-              <small>{view === 'inventory' ? copy.ledgerView : view === 'activity' ? 'Journal and retention' : 'Policies and signed manifests'}</small>
+              <strong>{view === 'inventory' ? copy.globalInventory : view === 'activity' ? copy.recoveryHistory : copy.teamGovernance}</strong>
+              <small>{view === 'inventory' ? copy.ledgerView : view === 'activity' ? copy.journalAndRetention : copy.policiesAndManifests}</small>
             </span>
           </div>
           {view === 'inventory' && <label className="search-field">
             <Search size={16} aria-hidden="true" />
             <span className="sr-only">{copy.searchSkills}</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.searchPlaceholder} />
+            <input ref={searchInput} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.searchPlaceholder} />
             <kbd><Command size={11} />K</kbd>
           </label>}
           {view === 'inventory' && <label className="health-filter">
@@ -909,6 +959,7 @@ export default function App() {
             <select value={health} onChange={(event) => setHealth(event.target.value as HealthFilter)}>
               <option value="all">{copy.allStates}</option>
               <option value="healthy">{copy.healthy}</option>
+              <option value="needs-review">{copy.needsReview}</option>
               <option value="review">{copy.review}</option>
               <option value="missing">{copy.missing}</option>
               <option value="broken">{copy.broken}</option>
@@ -918,8 +969,8 @@ export default function App() {
       )}
 
       <main>
-        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} sourceUpdates={sourceUpdatesBySkill} copy={copy} language={language} />}
-        {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} />}
+        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} sourceUpdates={sourceUpdatesBySkill} health={health} onHealth={setHealth} copy={copy} language={language} />}
+        {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} language={language} />}
         {view === 'team' && <TeamView copy={copy} />}
         {view === 'settings' && (
           <SettingsView
@@ -949,9 +1000,9 @@ export default function App() {
           {snapshot.warnings.length
             ? `${snapshot.warnings.length} ${copy.scanWarnings}`
             : view === 'activity'
-              ? '30-day safe retention'
+              ? copy.safeRetention
               : view === 'team'
-                ? 'Local policy enforcement'
+                ? copy.localPolicyEnforcement
                 : copy.readOnlyMode}
         </span>
       </footer>

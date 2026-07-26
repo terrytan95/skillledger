@@ -9,6 +9,10 @@
 .app.view-settings { grid-template-rows: 64px minmax(0, 1fr) 28px; }
 
 button { border: 0; background: none; cursor: pointer; }
+button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .app-header {
   -webkit-app-region: drag;
   display: flex;
@@ -185,6 +189,7 @@ main { min-height: 0; overflow: hidden; }
 .plan-steps li > span { color: #9b9d97; font-family: ui-monospace, monospace; font-size: 9px; }
 .plan-steps strong { font-size: 11px; }
 .plan-steps p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
+.plan-steps code { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; overflow-wrap: anywhere; }
 .plan-empty { margin: 4px 0 20px; padding: 18px; background: var(--code-bg); color: var(--muted); font-size: 10px; line-height: 1.5; text-align: center; }
 .plan-blockers { margin-top: 20px; }
 .plan-blockers > div { display: flex; gap: 9px; padding: 10px; border-top: 1px solid var(--broken-ink); color: var(--broken-ink); background: var(--broken-bg); }
