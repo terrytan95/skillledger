@@ -28,12 +28,16 @@ SkillLedger is built around that maintenance loop. Discovery stays read-only; se
 - Reads provenance from the optional `~/.agents/.skill-lock.json`.
 - Inspects Codex, Claude Code, Cursor, Gemini CLI, Grok, OpenCode, and AiderDesk skill directories.
 - Distinguishes healthy links, independent copies, missing canonical content, and broken symlinks.
+- Reads reproducible public GitHub pins (`repository`, `path`, 40-character commit `revision`, and SHA-256 tree hash).
+- Restores missing canonical skills or replaces canonical drift only after an explicit preview decision.
 - Provides search, health filters, inventory groups, source details, and Agent reach in the selected Ledger interface.
 - Creates deterministic, SHA-256-bound plans for the selected skill.
 - Preserves independent copies unless replacement is explicitly approved.
 - Journals every approved plan before same-volume atomic filesystem swaps.
 - Verifies the resulting links and automatically rolls back failed applies.
 - Supports explicit rollback from the durable journal, including after the app module is recreated.
+- Retains successful rollback data for 30 days, always preserves the newest successful backup per skill, and never auto-cleans incomplete or corrupt journals.
+- Imports local Team policies and Ed25519-signed manifests that enforce managed repositories, signer roles, and action approvals.
 - Uses representative demo data when the renderer runs in a normal browser.
 
 | Health | Meaning |
@@ -53,8 +57,9 @@ Ledger interface
                  ├─ ~/.agents/skills
                  ├─ ~/.agents/.skill-lock.json
                  └─ Agent-specific skill directories
+            ├─ GitHub source adapter + Team trust policy
             └─ reconciliation module
-                 └─ preview → journal → atomic apply → verify → rollback
+                 └─ preview → journal → atomic apply → verify → rollback → retention
 ```
 
 The renderer has no direct filesystem or Node.js access. Discovery lives in a small inventory module that can be tested without Electron.
@@ -66,6 +71,23 @@ scan → hash → plan → preview → journal → apply → verify → rollback
 ```
 
 If a plan's preconditions change, the plan must be regenerated rather than applied against stale state.
+
+Pinned lock entries use this backward-compatible shape:
+
+```json
+{
+  "skills": {
+    "review-code": {
+      "repository": "example/skills",
+      "path": "skills/review-code",
+      "revision": "0123456789abcdef0123456789abcdef01234567",
+      "sha256": "64-character-sha256-tree-hash"
+    }
+  }
+}
+```
+
+Only public GitHub repositories are supported in v1. GitHub trees are fetched at the exact commit, symlinks/submodules and unsafe paths are rejected, every blob is Git-SHA verified, and staged content must match the pinned SHA-256 before the canonical library changes. Team document schemas and signing rules are in [docs/TEAM.md](docs/TEAM.md).
 
 ## Development
 
@@ -106,6 +128,8 @@ electron/
   preload.ts              Minimal renderer bridge
   skill-inventory.ts      Filesystem discovery and health rules
   skill-reconciler.ts     Hash-bound planning, journaling, apply, and rollback
+  skill-source.ts         Pinned public GitHub staging and verification
+  team-policy.ts          Local Team trust and approval enforcement
 src/
   App.tsx                 Ledger workflow and interaction state
   App.css                 Ledger visual system
@@ -124,18 +148,22 @@ docs/
 - [x] Deterministic dry-run plans
 - [x] Append-only operation journal
 - [x] Atomic apply, verification, and rollback
-- [ ] GitHub update checks and pinned versions
-- [ ] Reproducible inventory export and restore
+- [x] Pinned public GitHub restore and canonical drift replacement
+- [x] Retention-aware Activity ledger
+- [x] Shared Team policies, signed manifests, managed repositories, and approval rules
+- [ ] Default-branch update discovery for pinned sources
+- [ ] Reproducible inventory export
 
 ## Security
 
 - Local-first: no account, telemetry, or hosted service.
 - Electron context isolation and renderer sandbox are enabled.
 - Renderer navigation and new windows are denied.
-- IPC exposes narrow scan, preview, apply, and rollback methods and validates every sender and argument.
+- IPC exposes narrow inventory, reconciliation, Activity, and Team-document methods and validates every sender and argument.
 - The renderer submits opaque plan and journal IDs, never filesystem paths.
 - Stale plans and paths outside configured roots are rejected before mutation.
 - Existing content is hash-verified in a same-directory backup before replacement or restoration.
+- Team private keys never enter the app; manifests are verified with Node's native Ed25519 implementation.
 
 Please report vulnerabilities through the repository's private GitHub Security Advisories. See [SECURITY.md](SECURITY.md).
 

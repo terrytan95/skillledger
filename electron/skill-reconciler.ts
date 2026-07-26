@@ -1,39 +1,51 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import {
   lstat,
   mkdir,
   open,
   readFile,
   readdir,
-  readlink,
   realpath,
   rename,
+  rm,
   symlink,
   unlink,
 } from 'node:fs/promises'
 import path from 'node:path'
 import { scanGlobalSkills } from './skill-inventory'
 import type { AgentLocation } from './skill-inventory'
+import { fingerprint, fingerprintsMatch } from './path-fingerprint'
+import { stageGitHubSkill } from './skill-source'
+import type { FetchSource } from './skill-source'
+import type { TeamManager } from './team-policy'
 import type {
+  ActivitySnapshot,
   ApplyResult,
+  DiscardResult,
+  JournalActivity,
   PathFingerprint,
   PlanBlocker,
   PlannedOperation,
   ReconcileRequest,
   ReconciliationPreview,
   RollbackResult,
+  SourcePin,
 } from '../src/types'
 
 interface SkillReconcilerOptions {
   homeDir: string
   agentLocations: AgentLocation[]
+  fetchSource?: FetchSource
+  teamManager?: TeamManager
 }
 
 interface StoredOperation {
   public: PlannedOperation
+  rootKind?: 'agent' | 'canonical'
   agentRoot: string
   canonicalRoot: string
   canonicalBefore: PathFingerprint
+  sourcePin?: SourcePin
 }
 
 interface StoredPlan {
@@ -46,67 +58,11 @@ interface JournalOperation extends StoredOperation {
 }
 
 interface JournalPlan {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   journalId: string
   planId: string
   createdAt: string
   operations: JournalOperation[]
-}
-
-async function fingerprint(entryPath: string): Promise<PathFingerprint> {
-  try {
-    const stats = await lstat(entryPath)
-    if (stats.isSymbolicLink()) {
-      const target = await readlink(entryPath)
-      return {
-        kind: 'symlink',
-        sha256: null,
-        linkTarget: path.resolve(path.dirname(entryPath), target),
-      }
-    }
-    if (stats.isFile()) {
-      return {
-        kind: 'file',
-        sha256: createHash('sha256').update(await readFile(entryPath)).digest('hex'),
-        linkTarget: null,
-      }
-    }
-    if (!stats.isDirectory()) return { kind: 'other', sha256: null, linkTarget: null }
-
-    const hash = createHash('sha256')
-    const visit = async (directory: string, relative = ''): Promise<void> => {
-      const entries = await readdir(directory, { withFileTypes: true })
-      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-        const childRelative = path.posix.join(relative, entry.name)
-        const childPath = path.join(directory, entry.name)
-        if (entry.isDirectory()) {
-          hash.update(`directory\0${childRelative}\0`)
-          await visit(childPath, childRelative)
-        } else if (entry.isFile()) {
-          hash.update(`file\0${childRelative}\0`)
-          hash.update(await readFile(childPath))
-          hash.update('\0')
-        } else if (entry.isSymbolicLink()) {
-          hash.update(`symlink\0${childRelative}\0${await readlink(childPath)}\0`)
-        } else {
-          hash.update(`other\0${childRelative}\0`)
-        }
-      }
-    }
-    await visit(entryPath)
-    return { kind: 'directory', sha256: hash.digest('hex'), linkTarget: null }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { kind: 'missing', sha256: null, linkTarget: null }
-    }
-    throw error
-  }
-}
-
-function fingerprintsMatch(left: PathFingerprint, right: PathFingerprint): boolean {
-  return left.kind === right.kind
-    && left.sha256 === right.sha256
-    && left.linkTarget === right.linkTarget
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -149,6 +105,15 @@ async function writeJournalPlan(journalDirectory: string, plan: JournalPlan): Pr
   await syncDirectory(journalDirectory)
 }
 
+function isSourceOperation(
+  operation: StoredOperation,
+): operation is StoredOperation & {
+  public: PlannedOperation & { kind: 'restore-canonical' | 'update-canonical' }
+} {
+  return operation.public.kind === 'restore-canonical'
+    || operation.public.kind === 'update-canonical'
+}
+
 export class SkillReconciler {
   private readonly plans = new Map<string, StoredPlan>()
   private readonly planReceipts = new Map<string, { status: 'applied' | 'rolled-back'; journalId: string }>()
@@ -156,9 +121,16 @@ export class SkillReconciler {
 
   constructor(private readonly options: SkillReconcilerOptions) {}
 
+  private async scan() {
+    return scanGlobalSkills({
+      ...this.options,
+      sourcePins: await this.options.teamManager?.sourcePins(),
+    })
+  }
+
   async preview(request: ReconcileRequest = {}): Promise<ReconciliationPreview> {
     const canonicalRoot = path.join(this.options.homeDir, '.agents', 'skills')
-    const inventory = await scanGlobalSkills(this.options)
+    const inventory = await this.scan()
     const operations: PlannedOperation[] = []
     const storedOperations: StoredOperation[] = []
     const blockers: PlanBlocker[] = []
@@ -167,17 +139,79 @@ export class SkillReconciler {
 
     for (const skill of inventory.skills) {
       if (request.skillIds && !request.skillIds.includes(skill.id)) continue
-      if (!skill.agents.some((agent) => agent.id === 'universal')) {
+      const canonicalPath = skill.canonicalPath
+      const canonicalBefore = await fingerprint(canonicalPath)
+      let canonicalFingerprint = canonicalBefore
+      const canonicalExists = skill.agents.some((agent) => agent.id === 'universal')
+      const sourceKind = canonicalExists ? 'update-canonical' : 'restore-canonical'
+      const needsSource = Boolean(
+        skill.sourcePin
+        && (!canonicalExists || canonicalBefore.sha256 !== skill.sourcePin.sha256),
+      )
+
+      if (!canonicalExists && !skill.sourcePin) {
         blockers.push({
           skillId: skill.id,
           code: 'missing-canonical',
           path: skill.canonicalPath,
-          message: 'Tracked skill is missing from the canonical library.',
+          message: 'Tracked skill has no complete pinned GitHub source.',
         })
         continue
       }
-      const canonicalPath = skill.canonicalPath
-      const canonicalFingerprint = await fingerprint(canonicalPath)
+      if (needsSource && request.sourcePolicy !== 'restore-pinned') {
+        blockers.push({
+          skillId: skill.id,
+          code: canonicalExists
+            ? 'source-update-requires-confirmation'
+            : 'source-restore-requires-confirmation',
+          path: skill.canonicalPath,
+          message: canonicalExists
+            ? 'Canonical drift is preserved until replacing it with the pinned source is explicitly approved.'
+            : 'Pinned source restoration requires explicit approval.',
+        })
+        if (!canonicalExists) continue
+      } else if (needsSource && skill.sourcePin) {
+        const approval = await this.options.teamManager?.authorize(
+          sourceKind,
+          skill.id,
+          skill.sourcePin,
+        )
+        if (approval && !approval.allowed) {
+          blockers.push({
+            skillId: skill.id,
+            code: 'team-approval-required',
+            path: skill.canonicalPath,
+            message: approval.reason ?? 'Team policy approval is required.',
+          })
+          if (!canonicalExists) continue
+        } else {
+          canonicalFingerprint = {
+            kind: 'directory',
+            sha256: skill.sourcePin.sha256,
+            linkTarget: null,
+          }
+          const sourceOperation: PlannedOperation = {
+            id: `${skill.id}:universal:source`,
+            skillId: skill.id,
+            agentId: 'universal',
+            kind: sourceKind,
+            targetPath: canonicalPath,
+            canonicalPath,
+            before: canonicalBefore,
+            after: canonicalFingerprint,
+            sourcePin: skill.sourcePin,
+          }
+          operations.push(sourceOperation)
+          storedOperations.push({
+            public: sourceOperation,
+            rootKind: 'canonical',
+            agentRoot: canonicalRoot,
+            canonicalRoot,
+            canonicalBefore,
+            sourcePin: skill.sourcePin,
+          })
+        }
+      }
 
       for (const agent of this.options.agentLocations) {
         if (request.agentIds && !request.agentIds.includes(agent.id)) continue
@@ -214,6 +248,22 @@ export class SkillReconciler {
             })
             continue
           }
+          const approval = await this.options.teamManager?.authorize(
+            'replace-copy',
+            skill.id,
+            undefined,
+            agent.id,
+          )
+          if (approval && !approval.allowed) {
+            blockers.push({
+              skillId: skill.id,
+              agentId: agent.id,
+              code: 'team-approval-required',
+              path: targetPath,
+              message: approval.reason ?? 'Team policy approval is required.',
+            })
+            continue
+          }
         } else if (before.kind === 'other') {
           blockers.push({
             skillId: skill.id,
@@ -242,6 +292,7 @@ export class SkillReconciler {
         operations.push(operation)
         storedOperations.push({
           public: operation,
+          rootKind: 'agent',
           agentRoot,
           canonicalRoot,
           canonicalBefore: canonicalFingerprint,
@@ -260,6 +311,8 @@ export class SkillReconciler {
         createLinks: operations.filter((operation) => operation.kind === 'create-symlink').length,
         repairLinks: operations.filter((operation) => operation.kind === 'repair-symlink').length,
         replaceCopies: operations.filter((operation) => operation.kind === 'replace-copy').length,
+        restoreCanonical: operations.filter((operation) => operation.kind === 'restore-canonical').length,
+        updateCanonical: operations.filter((operation) => operation.kind === 'update-canonical').length,
         unchanged,
         blocked: blockers.length,
       },
@@ -276,7 +329,7 @@ export class SkillReconciler {
         status: 'already-applied',
         planId,
         journalId: receipt.journalId,
-        snapshot: await scanGlobalSkills(this.options),
+        snapshot: await this.scan(),
       }
     }
     if (receipt?.status === 'rolled-back') {
@@ -329,9 +382,15 @@ export class SkillReconciler {
   }
 
   private async applyPlan(planId: string, plan: StoredPlan): Promise<ApplyResult> {
+    const sourceTargets = new Set(
+      plan.operations.filter(isSourceOperation).map((operation) => operation.public.canonicalPath),
+    )
     for (const operation of plan.operations) {
       try {
-        await this.assertSafe(operation)
+        await this.assertSafe(
+          operation,
+          !isSourceOperation(operation) && sourceTargets.has(operation.public.canonicalPath),
+        )
       } catch (error) {
         return {
           status: 'rejected',
@@ -360,7 +419,7 @@ export class SkillReconciler {
         : `${operation.public.targetPath}.skillledger-${journalId}.backup`,
     }))
     await writeJournalPlan(journalDirectory, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       journalId,
       planId,
       createdAt: new Date().toISOString(),
@@ -374,8 +433,17 @@ export class SkillReconciler {
         await this.assertSafe(operation)
         const target = operation.public.targetPath
         const temporary = `${target}.skillledger-${journalId}.tmp`
-        await symlink(path.relative(path.dirname(target), operation.public.canonicalPath), temporary, 'dir')
         temporaryPaths.push(temporary)
+        if (isSourceOperation(operation)) {
+          if (!operation.sourcePin) throw new Error('Source operation has no pinned GitHub source.')
+          await stageGitHubSkill(
+            operation.sourcePin,
+            temporary,
+            this.options.fetchSource ?? fetch,
+          )
+        } else {
+          await symlink(path.relative(path.dirname(target), operation.public.canonicalPath), temporary, 'dir')
+        }
         if (operation.backupPath) {
           await rename(target, operation.backupPath)
           applied.push(operation)
@@ -399,12 +467,15 @@ export class SkillReconciler {
 
       for (const operation of applied) {
         const actual = await fingerprint(operation.public.targetPath)
-        const canonical = await fingerprint(operation.public.canonicalPath)
-        if (
-          actual.kind !== 'symlink'
-          || actual.linkTarget !== operation.public.canonicalPath
-          || !fingerprintsMatch(canonical, operation.canonicalBefore)
-        ) {
+        const verified = isSourceOperation(operation)
+          ? fingerprintsMatch(actual, operation.public.after)
+          : actual.kind === 'symlink'
+            && actual.linkTarget === operation.public.canonicalPath
+            && fingerprintsMatch(
+              await fingerprint(operation.public.canonicalPath),
+              operation.canonicalBefore,
+            )
+        if (!verified) {
           throw new VerificationError(`Verification failed for ${operation.public.skillId}.`)
         }
       }
@@ -415,10 +486,10 @@ export class SkillReconciler {
         status: 'applied',
         planId,
         journalId,
-        snapshot: await scanGlobalSkills(this.options),
+        snapshot: await this.scan(),
       }
     } catch (error) {
-      await Promise.all(temporaryPaths.map((temporary) => unlink(temporary).catch(() => undefined)))
+      await Promise.all(temporaryPaths.map((temporary) => rm(temporary, { recursive: true, force: true })))
       const rollbackFailure = await this.rollbackApplied(applied, journalDirectory)
       if (rollbackFailure) {
         return {
@@ -438,7 +509,7 @@ export class SkillReconciler {
           phase: error instanceof VerificationError ? 'verify' : 'apply',
           message: (error as Error).message,
         },
-        snapshot: await scanGlobalSkills(this.options),
+        snapshot: await this.scan(),
       }
     }
   }
@@ -482,19 +553,9 @@ export class SkillReconciler {
     let plan: JournalPlan
     let events: Array<{ status?: string }>
     try {
-      plan = JSON.parse(await readFile(path.join(journalDirectory, 'plan.json'), 'utf8')) as JournalPlan
-      events = (await readFile(path.join(journalDirectory, 'events.jsonl'), 'utf8'))
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { status?: string })
-      if (
-        plan.schemaVersion !== 1
-        || plan.journalId !== journalId
-        || !Array.isArray(plan.operations)
-      ) {
-        throw new Error('Journal plan is invalid.')
-      }
+      const journal = await this.readJournal(journalId)
+      plan = journal.plan
+      events = journal.events
     } catch (error) {
       return {
         status: 'rejected',
@@ -511,7 +572,29 @@ export class SkillReconciler {
       return {
         status: 'already-rolled-back',
         journalId,
-        snapshot: await scanGlobalSkills(this.options),
+        snapshot: await this.scan(),
+      }
+    }
+    if (events.some((event) => event.status === 'rollback-discarded')) {
+      return {
+        status: 'rejected',
+        journalId,
+        error: {
+          code: 'rollback-conflict',
+          phase: 'rollback',
+          message: 'Rollback data for this journal was explicitly discarded.',
+        },
+      }
+    }
+    if (events.some((event) => event.status === 'rollback-discard-intent')) {
+      return {
+        status: 'rejected',
+        journalId,
+        error: {
+          code: 'rollback-conflict',
+          phase: 'rollback',
+          message: 'Rollback data deletion was interrupted; the journal is protected for inspection.',
+        },
       }
     }
     if (!events.some((event) => event.status === 'verified')) {
@@ -530,14 +613,14 @@ export class SkillReconciler {
       for (const operation of [...plan.operations].reverse()) {
         await this.assertJournalOperationSafe(operation, journalId)
         const current = await fingerprint(operation.public.targetPath)
-        if (current.kind !== 'symlink' || current.linkTarget !== operation.public.canonicalPath) {
+        if (!this.matchesApplied(operation, current)) {
           return {
             status: 'rejected',
             journalId,
             error: {
               code: 'rollback-conflict',
               phase: 'rollback',
-              message: `The Agent copy changed after apply: ${operation.public.skillId}.`,
+              message: `Managed content changed after apply: ${operation.public.skillId}.`,
             },
           }
         }
@@ -555,13 +638,7 @@ export class SkillReconciler {
             },
           }
         }
-        await unlink(operation.public.targetPath)
-        if (operation.backupPath) {
-          await rename(operation.backupPath, operation.public.targetPath)
-        }
-        if (!fingerprintsMatch(await fingerprint(operation.public.targetPath), operation.public.before)) {
-          throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
-        }
+        await this.restoreOperation(operation)
         await syncDirectory(path.dirname(operation.public.targetPath))
         await appendJournalEvent(journalDirectory, {
           status: 'rolled-back',
@@ -573,7 +650,7 @@ export class SkillReconciler {
       return {
         status: 'rolled-back',
         journalId,
-        snapshot: await scanGlobalSkills(this.options),
+        snapshot: await this.scan(),
       }
     } catch (error) {
       await appendJournalEvent(journalDirectory, {
@@ -588,10 +665,293 @@ export class SkillReconciler {
     }
   }
 
-  private async assertSafe(operation: StoredOperation): Promise<void> {
+  async activity(): Promise<ActivitySnapshot> {
+    if (!this.mutating) {
+      this.mutating = true
+      try {
+        await this.cleanupExpiredBackups()
+      } finally {
+        this.mutating = false
+      }
+    }
+    return this.readActivity()
+  }
+
+  async discard(journalId: string): Promise<DiscardResult> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(journalId)) {
+      return {
+        status: 'rejected',
+        journalId,
+        error: { code: 'journal-not-found', phase: 'rollback', message: 'Unknown reconciliation journal.' },
+      }
+    }
+    if (this.mutating) {
+      return {
+        status: 'rejected',
+        journalId,
+        error: {
+          code: 'operation-in-progress',
+          phase: 'rollback',
+          message: 'Another reconciliation operation is already running.',
+        },
+      }
+    }
+    this.mutating = true
+    try {
+      const status = await this.discardJournal(journalId, 'explicit')
+      return { status, journalId, activity: await this.readActivity() }
+    } catch (error) {
+      return {
+        status: 'rejected',
+        journalId,
+        error: { code: 'rollback-conflict', phase: 'rollback', message: (error as Error).message },
+      }
+    } finally {
+      this.mutating = false
+    }
+  }
+
+  private journalsRoot(): string {
+    return path.join(this.options.homeDir, '.agents', '.skillledger', 'journals')
+  }
+
+  private async journalIds(): Promise<string[]> {
+    try {
+      return (await readdir(this.journalsRoot(), { withFileTypes: true }))
+        .filter((entry) => (
+          entry.isDirectory()
+          && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.name)
+        ))
+        .map((entry) => entry.name)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+  }
+
+  private async readJournal(journalId: string): Promise<{
+    directory: string
+    plan: JournalPlan
+    events: Array<{ status?: string; operationId?: string }>
+  }> {
+    const directory = path.join(this.journalsRoot(), journalId)
+    const plan = JSON.parse(await readFile(path.join(directory, 'plan.json'), 'utf8')) as JournalPlan
+    const events = (await readFile(path.join(directory, 'events.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { status?: string; operationId?: string })
+    const knownStatuses = new Set([
+      'prepared',
+      'backed-up',
+      'applied',
+      'verified',
+      'rolled-back',
+      'rollback-complete',
+      'rollback-failed',
+      'rollback-discard-intent',
+      'rollback-discarded',
+    ])
+    if (
+      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2)
+      || plan.journalId !== journalId
+      || !Number.isFinite(Date.parse(plan.createdAt))
+      || !Array.isArray(plan.operations)
+      || events.some((event) => typeof event.status !== 'string' || !knownStatuses.has(event.status))
+    ) {
+      throw new Error('Journal plan is invalid.')
+    }
+    return { directory, plan, events }
+  }
+
+  private async readActivity(): Promise<ActivitySnapshot> {
+    const entries = await Promise.all((await this.journalIds()).map(async (journalId): Promise<JournalActivity> => {
+      try {
+        const { plan, events } = await this.readJournal(journalId)
+        const rolledBack = events.some((event) => event.status === 'rollback-complete')
+        const discarded = events.some((event) => event.status === 'rollback-discarded')
+        const rollbackFailed = events.some((event) => event.status === 'rollback-failed')
+        const discardIntent = events.some((event) => event.status === 'rollback-discard-intent')
+        const verified = events.some((event) => event.status === 'verified')
+        const status: JournalActivity['status'] = rolledBack
+          ? 'rolled-back'
+          : discarded
+            ? 'discarded'
+            : rollbackFailed || discardIntent
+              ? 'rollback-incomplete'
+              : verified
+                ? 'verified'
+                : 'incomplete'
+        const backupBytes = (await Promise.all(plan.operations.map((operation) => (
+          operation.backupPath ? this.pathBytes(operation.backupPath) : Promise.resolve(0)
+        )))).reduce((total, value) => total + value, 0)
+        return {
+          journalId,
+          createdAt: plan.createdAt,
+          status,
+          skillIds: [...new Set(plan.operations.map((operation) => operation.public.skillId))],
+          backupBytes,
+          rollbackAvailable: status === 'verified',
+          protected: status === 'incomplete' || status === 'rollback-incomplete',
+        }
+      } catch {
+        return {
+          journalId,
+          createdAt: null,
+          status: 'corrupt',
+          skillIds: [],
+          backupBytes: 0,
+          rollbackAvailable: false,
+          protected: true,
+        }
+      }
+    }))
+    entries.sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''))
+    return {
+      retentionDays: 30,
+      totalBackupBytes: entries.reduce((total, entry) => total + entry.backupBytes, 0),
+      entries,
+    }
+  }
+
+  private async pathBytes(entryPath: string): Promise<number> {
+    try {
+      const stats = await lstat(entryPath)
+      if (!stats.isDirectory() || stats.isSymbolicLink()) return stats.size
+      const children = await readdir(entryPath)
+      return (await Promise.all(children.map((child) => this.pathBytes(path.join(entryPath, child)))))
+        .reduce((total, value) => total + value, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+      throw error
+    }
+  }
+
+  private async verifiedJournals(): Promise<Array<Awaited<ReturnType<SkillReconciler['readJournal']>>>> {
+    const journals = await Promise.all((await this.journalIds()).map(async (journalId) => {
+      try {
+        const journal = await this.readJournal(journalId)
+        const statuses = new Set(journal.events.map((event) => event.status))
+        return statuses.has('verified')
+          && !statuses.has('rollback-complete')
+          && !statuses.has('rollback-discarded')
+          && !statuses.has('rollback-failed')
+          && !statuses.has('rollback-discard-intent')
+          ? journal
+          : null
+      } catch {
+        return null
+      }
+    }))
+    return journals.filter((journal): journal is NonNullable<typeof journal> => journal !== null)
+  }
+
+  private async cleanupExpiredBackups(): Promise<void> {
+    const journals = await this.verifiedJournals()
+    const newestBySkill = new Map<string, string>()
+    for (const journal of [...journals].sort((left, right) => right.plan.createdAt.localeCompare(left.plan.createdAt))) {
+      for (const operation of journal.plan.operations) {
+        if (!newestBySkill.has(operation.public.skillId)) {
+          newestBySkill.set(operation.public.skillId, journal.plan.journalId)
+        }
+      }
+    }
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1_000
+    for (const journal of journals) {
+      const skills = [...new Set(journal.plan.operations.map((operation) => operation.public.skillId))]
+      if (
+        Date.parse(journal.plan.createdAt) < cutoff
+        && skills.every((skillId) => newestBySkill.get(skillId) !== journal.plan.journalId)
+      ) {
+        await this.discardJournal(journal.plan.journalId, 'retention').catch(() => undefined)
+      }
+    }
+  }
+
+  private async discardJournal(
+    journalId: string,
+    reason: 'explicit' | 'retention',
+  ): Promise<'discarded' | 'already-discarded'> {
+    const journal = await this.readJournal(journalId)
+    const statuses = new Set(journal.events.map((event) => event.status))
+    if (statuses.has('rollback-discarded')) return 'already-discarded'
+    if (
+      !statuses.has('verified')
+      || statuses.has('rollback-complete')
+      || statuses.has('rollback-failed')
+    ) {
+      throw new Error('Only a fully verified, unchanged journal can discard rollback data.')
+    }
+
+    const latestByTarget = new Map<string, JournalOperation>()
+    for (const candidate of [...await this.verifiedJournals()]
+      .sort((left, right) => left.plan.createdAt.localeCompare(right.plan.createdAt))) {
+      for (const operation of candidate.plan.operations) {
+        latestByTarget.set(operation.public.targetPath, operation)
+      }
+    }
+    for (const operation of journal.plan.operations) {
+      await this.assertJournalOperationSafe(operation, journalId)
+      const expected = latestByTarget.get(operation.public.targetPath) ?? operation
+      if (!this.matchesApplied(expected, await fingerprint(operation.public.targetPath))) {
+        throw new Error(`Managed content changed after apply: ${operation.public.skillId}.`)
+      }
+      if (
+        operation.backupPath
+        && !fingerprintsMatch(await fingerprint(operation.backupPath), operation.public.before)
+      ) {
+        throw new Error(`Rollback backup changed: ${operation.public.skillId}.`)
+      }
+    }
+    if (!statuses.has('rollback-discard-intent')) {
+      await appendJournalEvent(journal.directory, { status: 'rollback-discard-intent', reason })
+    }
+    for (const operation of journal.plan.operations) {
+      if (operation.backupPath) await rm(operation.backupPath, { recursive: true, force: false })
+    }
+    await appendJournalEvent(journal.directory, { status: 'rollback-discarded', reason })
+    return 'discarded'
+  }
+
+  private async assertSafe(operation: StoredOperation, skipCanonical = false): Promise<void> {
     const { canonicalPath, targetPath } = operation.public
     const canonicalRoot = await realpath(operation.canonicalRoot)
-    const canonical = await realpath(canonicalPath)
+    const home = await realpath(this.options.homeDir)
+    if (!isInside(home, canonicalRoot)) {
+      throw new Error(`Canonical root is outside the managed home: ${canonicalRoot}`)
+    }
+
+    if (isSourceOperation(operation)) {
+      if (
+        operation.rootKind !== 'canonical'
+        || operation.agentRoot !== operation.canonicalRoot
+        || path.dirname(targetPath) !== operation.canonicalRoot
+        || targetPath !== canonicalPath
+        || path.dirname(canonicalPath) !== operation.canonicalRoot
+      ) {
+        throw new Error(`Canonical source path is outside the managed root: ${targetPath}`)
+      }
+      const currentPin = (await this.scan()).skills.find(
+        (skill) => skill.id === operation.public.skillId,
+      )?.sourcePin
+      if (!operation.sourcePin || JSON.stringify(currentPin) !== JSON.stringify(operation.sourcePin)) {
+        throw new StalePlanError(`The pinned source changed after preview for ${operation.public.skillId}.`)
+      }
+      const approval = await this.options.teamManager?.authorize(
+        operation.public.kind,
+        operation.public.skillId,
+        operation.sourcePin,
+      )
+      if (approval && !approval.allowed) throw new Error(approval.reason ?? 'Team approval is required.')
+      if (!fingerprintsMatch(await fingerprint(targetPath), operation.public.before)) {
+        throw new StalePlanError(`The filesystem changed after preview for ${operation.public.skillId}.`)
+      }
+      return
+    }
+
+    const canonical = skipCanonical
+      ? path.join(await realpath(path.dirname(canonicalPath)), path.basename(canonicalPath))
+      : await realpath(canonicalPath)
     const canonicalRelative = path.relative(canonicalRoot, canonical)
     if (
       !canonicalRelative
@@ -603,7 +963,6 @@ export class SkillReconciler {
     }
 
     const agentRoot = await realpath(operation.agentRoot)
-    const home = await realpath(this.options.homeDir)
     const targetParent = await realpath(path.dirname(targetPath))
     if (
       !isInside(home, agentRoot)
@@ -614,10 +973,19 @@ export class SkillReconciler {
     }
 
     if (
-      !fingerprintsMatch(await fingerprint(canonicalPath), operation.canonicalBefore)
+      (!skipCanonical && !fingerprintsMatch(await fingerprint(canonicalPath), operation.canonicalBefore))
       || !fingerprintsMatch(await fingerprint(targetPath), operation.public.before)
     ) {
       throw new StalePlanError(`The filesystem changed after preview for ${operation.public.skillId}.`)
+    }
+    if (operation.public.kind === 'replace-copy') {
+      const approval = await this.options.teamManager?.authorize(
+        'replace-copy',
+        operation.public.skillId,
+        undefined,
+        operation.public.agentId,
+      )
+      if (approval && !approval.allowed) throw new Error(approval.reason ?? 'Team approval is required.')
     }
   }
 
@@ -628,10 +996,7 @@ export class SkillReconciler {
     try {
       for (const operation of [...applied].reverse()) {
         const current = await fingerprint(operation.public.targetPath)
-        if (
-          current.kind !== 'missing'
-          && (current.kind !== 'symlink' || current.linkTarget !== operation.public.canonicalPath)
-        ) {
+        if (current.kind !== 'missing' && !this.matchesApplied(operation, current)) {
           throw new Error(`Rollback conflict for ${operation.public.targetPath}.`)
         }
         if (
@@ -640,11 +1005,7 @@ export class SkillReconciler {
         ) {
           throw new Error(`Backup verification failed for ${operation.public.targetPath}.`)
         }
-        if (current.kind === 'symlink') await unlink(operation.public.targetPath)
-        if (operation.backupPath) await rename(operation.backupPath, operation.public.targetPath)
-        if (!fingerprintsMatch(await fingerprint(operation.public.targetPath), operation.public.before)) {
-          throw new Error(`Rollback verification failed for ${operation.public.targetPath}.`)
-        }
+        await this.restoreOperation(operation)
         await syncDirectory(path.dirname(operation.public.targetPath))
         await appendJournalEvent(journalDirectory, {
           status: 'rolled-back',
@@ -676,15 +1037,21 @@ export class SkillReconciler {
       throw new Error('Journal contains an invalid skill identifier.')
     }
 
-    const agent = this.options.agentLocations.find((candidate) => candidate.id === agentId)
-    if (!agent) throw new Error('Journal references an unknown Agent destination.')
     const canonicalRoot = path.join(this.options.homeDir, '.agents', 'skills')
-    const agentRoot = path.resolve(this.options.homeDir, agent.relativePath)
+    const sourceOperation = isSourceOperation(operation)
+    const agent = sourceOperation
+      ? null
+      : this.options.agentLocations.find((candidate) => candidate.id === agentId)
+    if (!sourceOperation && !agent) throw new Error('Journal references an unknown Agent destination.')
+    const agentRoot = sourceOperation
+      ? canonicalRoot
+      : path.resolve(this.options.homeDir, agent!.relativePath)
     if (
       operation.canonicalRoot !== canonicalRoot
       || operation.agentRoot !== agentRoot
       || operation.public.canonicalPath !== path.join(canonicalRoot, skillId)
       || operation.public.targetPath !== path.join(agentRoot, skillId)
+      || (sourceOperation && operation.rootKind !== 'canonical')
     ) {
       throw new Error('Journal path is outside the configured roots.')
     }
@@ -692,15 +1059,54 @@ export class SkillReconciler {
       ? null
       : `${operation.public.targetPath}.skillledger-${journalId}.backup`
     if (operation.backupPath !== expectedBackup) {
-      throw new Error('Journal backup escaped the configured Agent root.')
+      throw new Error('Journal backup escaped the configured root.')
     }
 
     const resolvedAgentRoot = await realpath(agentRoot)
     const resolvedHome = await realpath(this.options.homeDir)
     const resolvedTargetParent = await realpath(path.dirname(operation.public.targetPath))
     if (!isInside(resolvedHome, resolvedAgentRoot) || resolvedAgentRoot !== resolvedTargetParent) {
-      throw new Error('Journal target parent escaped the configured Agent root.')
+      throw new Error('Journal target parent escaped the configured root.')
     }
+  }
+
+  private matchesApplied(operation: StoredOperation, current: PathFingerprint): boolean {
+    return isSourceOperation(operation)
+      ? fingerprintsMatch(current, operation.public.after)
+      : current.kind === 'symlink' && current.linkTarget === operation.public.canonicalPath
+  }
+
+  private async restoreOperation(operation: JournalOperation): Promise<void> {
+    const target = operation.public.targetPath
+    const current = await fingerprint(target)
+    if (isSourceOperation(operation)) {
+      const displaced = `${target}.skillledger-rollback-${randomUUID()}.tmp`
+      if (current.kind !== 'missing') await rename(target, displaced)
+      try {
+        if (operation.backupPath) await rename(operation.backupPath, target)
+        if (!fingerprintsMatch(await fingerprint(target), operation.public.before)) {
+          throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
+        }
+        await syncDirectory(path.dirname(target))
+        if (current.kind !== 'missing') await rm(displaced, { recursive: true, force: true })
+      } catch (error) {
+        if (
+          (await fingerprint(target)).kind === 'missing'
+          && (await fingerprint(displaced)).kind !== 'missing'
+        ) {
+          await rename(displaced, target).catch(() => undefined)
+        }
+        throw error
+      }
+      return
+    }
+
+    if (current.kind === 'symlink') await unlink(target)
+    if (operation.backupPath) await rename(operation.backupPath, target)
+    if (!fingerprintsMatch(await fingerprint(target), operation.public.before)) {
+      throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
+    }
+    await syncDirectory(path.dirname(target))
   }
 }
 
