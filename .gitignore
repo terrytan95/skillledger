@@ -15,6 +15,30 @@ coverage
 *.tsbuildinfo
 *.local
 
+# Secrets and private local data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+secrets.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Local agent and index state
+.agents/
+.codex/
+.codegraph/
+agent_team/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
