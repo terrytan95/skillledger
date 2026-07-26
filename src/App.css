@@ -264,7 +264,7 @@ main { min-height: 0; overflow: hidden; }
 }
 .settings-intro h1 { margin: 7px 0 11px; font-family: Georgia, "PingFang SC", serif; font-size: 27px; font-weight: 500; line-height: 1.16; }
 .settings-intro > p:last-child { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.settings-sections { display: grid; gap: 16px; }
+.settings-sections { display: grid; align-content: start; gap: 16px; }
 .settings-section { border: 1px solid var(--line); background: var(--surface); }
 .settings-section-title { display: flex; gap: 11px; padding: 19px 20px; }
 .settings-section-title > svg { margin-top: 1px; color: var(--accent); }
@@ -303,9 +303,51 @@ main { min-height: 0; overflow: hidden; }
   font-weight: 700;
 }
 .segmented-control button.selected { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px var(--panel-shadow); }
-.accent-options { max-width: 260px; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
-.accent-options button { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 50%; }
-.accent-options button.selected { border-color: var(--ink); }
+.accent-row { position: relative; }
+.accent-select { position: relative; z-index: 2; width: 200px; flex: 0 0 auto; }
+.accent-select summary {
+  height: 37px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  cursor: pointer;
+  list-style: none;
+}
+.accent-select summary::-webkit-details-marker { display: none; }
+.accent-select summary > svg { margin-left: auto; color: var(--muted); transition: transform .16s ease; }
+.accent-select[open] summary > svg { transform: rotate(180deg); }
+.accent-select summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.accent-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+.accent-menu button {
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  color: var(--ink);
+  font-size: 9px;
+  text-align: left;
+}
+.accent-menu button:hover, .accent-menu button:focus-visible { background: var(--code-bg); }
+.accent-menu button.selected { color: var(--accent); background: var(--accent-soft); }
+.accent-menu button > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accent-menu button > svg { flex: 0 0 auto; margin-left: auto; }
 .accent-swatch { width: 18px; height: 18px; display: block; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
 .swatch-forest { background: #315f47; }
 .swatch-ocean { background: #3d6f91; }
