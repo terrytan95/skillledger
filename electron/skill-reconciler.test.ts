@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto'
 import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SkillReconciler } from './skill-reconciler'
+import { fingerprint } from './path-fingerprint'
 
 const temporaryHomes: string[] = []
 
@@ -352,5 +354,112 @@ describe('SkillReconciler', () => {
         }],
       },
     })
+  })
+
+  it('discards verified rollback data while retaining the journal audit', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
+    temporaryHomes.push(home)
+    const canonical = path.join(home, '.agents', 'skills', 'review-code')
+    const cursorCopy = path.join(home, '.cursor', 'skills', 'review-code')
+    await mkdir(canonical, { recursive: true })
+    await mkdir(cursorCopy, { recursive: true })
+    await writeFile(path.join(canonical, 'SKILL.md'), 'canonical content\n')
+    await writeFile(path.join(cursorCopy, 'SKILL.md'), 'local customized content\n')
+    const reconciler = new SkillReconciler({
+      homeDir: home,
+      agentLocations: [{ id: 'cursor', label: 'Cursor', relativePath: '.cursor/skills' }],
+    })
+    const preview = await reconciler.preview({ copyPolicy: 'replace-with-symlink' })
+    const applied = await reconciler.apply(preview.planId)
+    if (applied.status !== 'applied') throw new Error(`Expected apply, received ${applied.status}`)
+
+    const discarded = await reconciler.discard(applied.journalId)
+    const rollback = await reconciler.rollback(applied.journalId)
+
+    expect(discarded).toMatchObject({
+      status: 'discarded',
+      activity: {
+        totalBackupBytes: 0,
+        entries: [{
+          journalId: applied.journalId,
+          status: 'discarded',
+          rollbackAvailable: false,
+        }],
+      },
+    })
+    expect(rollback).toMatchObject({
+      status: 'rejected',
+      error: { code: 'rollback-conflict' },
+    })
+  })
+
+  it('restores a missing canonical skill from an exact GitHub pin before linking it', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
+    temporaryHomes.push(home)
+    const canonicalRoot = path.join(home, '.agents', 'skills')
+    const canonical = path.join(canonicalRoot, 'review-code')
+    const codexRoot = path.join(home, '.codex', 'skills')
+    await mkdir(canonicalRoot, { recursive: true })
+    await mkdir(codexRoot, { recursive: true })
+    const expected = path.join(home, 'expected')
+    await mkdir(expected)
+    const content = Buffer.from('---\nname: review-code\n---\n')
+    await writeFile(path.join(expected, 'SKILL.md'), content)
+    const expectedHash = (await fingerprint(expected)).sha256!
+    await rm(expected, { recursive: true })
+    await writeFile(path.join(home, '.agents', '.skill-lock.json'), JSON.stringify({
+      skills: {
+        'review-code': {
+          source: 'example/skills',
+          sourceType: 'github',
+          repository: 'example/skills',
+          path: 'skills/review-code',
+          revision: '1'.repeat(40),
+          sha256: expectedHash,
+        },
+      },
+    }))
+    const blobSha = createHash('sha1')
+      .update(`blob ${content.length}\0`)
+      .update(content)
+      .digest('hex')
+    const json = (value: object) => new Response(JSON.stringify(value), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const fetchSource = async (input: string) => {
+      if (input.includes('/git/commits/')) return json({ sha: '1'.repeat(40), tree: { sha: 'a'.repeat(40) } })
+      if (input.endsWith(`/git/trees/${'a'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'b'.repeat(40) }] })
+      }
+      if (input.endsWith(`/git/trees/${'b'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'review-code', mode: '040000', type: 'tree', sha: 'c'.repeat(40) }] })
+      }
+      if (input.includes(`git/trees/${'c'.repeat(40)}?recursive=1`)) {
+        return json({
+          truncated: false,
+          tree: [{ path: 'SKILL.md', mode: '100644', type: 'blob', size: content.length, sha: blobSha }],
+        })
+      }
+      return json({ encoding: 'base64', content: content.toString('base64') })
+    }
+    const reconciler = new SkillReconciler({
+      homeDir: home,
+      agentLocations: [{ id: 'codex', label: 'Codex', relativePath: '.codex/skills' }],
+      fetchSource,
+    })
+
+    const preview = await reconciler.preview({ sourcePolicy: 'restore-pinned' })
+    const applied = await reconciler.apply(preview.planId)
+    if (applied.status !== 'applied') throw new Error(`Expected apply, received ${JSON.stringify(applied)}`)
+
+    expect(preview.operations.map((operation) => operation.kind))
+      .toEqual(['restore-canonical', 'create-symlink'])
+    expect(applied.snapshot.skills[0]).toMatchObject({
+      id: 'review-code',
+      health: 'healthy',
+      sourceState: 'pinned',
+    })
+    expect((await reconciler.rollback(applied.journalId)).status).toBe('rolled-back')
+    expect(await fingerprint(canonical)).toMatchObject({ kind: 'missing' })
   })
 })

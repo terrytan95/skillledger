@@ -19,6 +19,13 @@ function skill(
     source,
     sourceUrl: source ? `https://github.com/${source}` : null,
     sourceType: source ? 'github' : null,
+    sourcePin: source ? {
+      repository: source,
+      path: `skills/${id}`,
+      revision: '0'.repeat(40),
+      sha256: '0'.repeat(64),
+    } : null,
+    sourceState: source ? (health === 'missing' ? 'missing' as const : 'pinned' as const) : 'local' as const,
     updatedAt: source ? '2026-07-25T18:20:00Z' : null,
     health,
     healthReason: reason,

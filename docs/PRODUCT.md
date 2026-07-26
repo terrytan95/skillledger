@@ -34,18 +34,26 @@ SkillLedger makes a global skill library understandable and safe to maintain acr
 
 Independent copies remain untouched by default. Missing canonical content is reported as blocked because source restoration belongs to the later source-maintenance stage.
 
-### Source maintenance — later
+### Source maintenance — shipped
 
-- GitHub source discovery and update checks.
-- `skills` CLI adapter for installation and updates.
-- Pinned versions and reproducible export/import.
-- Release notes and per-skill update policy.
+- Public GitHub source pins at exact commit SHAs.
+- Staged tree/blob validation with deterministic SHA-256 verification.
+- Explicit restore of missing canonical skills and replacement of canonical drift.
+- Source operations use the same journal, atomic apply, verification, and rollback pipeline.
 
-### Team features — only with demand
+### Recovery retention — shipped
+
+- Successful rollback data expires after 30 days only when every affected skill has a newer successful journal.
+- The newest successful backup per skill is retained.
+- Incomplete, corrupt, and rollback-incomplete journals are protected.
+- Users can explicitly discard rollback data while preserving the audit journal.
+
+### Team features — shipped
 
 - Shared policy files.
-- Signed manifests.
-- Managed repositories and approval rules.
+- Ed25519-signed, expiring, monotonic manifests.
+- Managed public GitHub repositories and path prefixes.
+- Role-based approval rules enforced during preview and rechecked during apply.
 
 ## Non-goals
 
@@ -53,6 +61,7 @@ Independent copies remain untouched by default. Missing canonical content is rep
 - Editing skill content inside the app.
 - Cloud accounts or sync before local reconciliation is trustworthy.
 - A generic extension framework before real external integrations require it.
+- Private GitHub authentication, cloud policy distribution, key generation, or private-key custody.
 
 ## Success measures
 
