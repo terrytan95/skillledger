@@ -66,9 +66,10 @@ describe('SkillReconciler', () => {
       status: 'applied',
       planId: preview.planId,
       snapshot: {
-        summary: { total: 1, healthy: 0, review: 1, broken: 0 },
+        summary: { total: 1, healthy: 1, review: 0, broken: 0 },
         skills: [{
           id: 'review-code',
+          health: 'healthy',
           agents: [
             { id: 'universal', kind: 'canonical', healthy: true },
             { id: 'codex', kind: 'symlink', healthy: true },
