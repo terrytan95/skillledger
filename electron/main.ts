@@ -5,6 +5,7 @@ import path from 'node:path'
 import { checkForUpdates } from './app-update'
 import { defaultAgentLocations, scanGlobalSkills } from './skill-inventory'
 import { SkillReconciler } from './skill-reconciler'
+import { TeamManager } from './team-policy'
 import type { ReconcileRequest } from '../src/types'
 
 const appRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -16,21 +17,32 @@ const channels = {
   preview: 'skillledger:reconcile:preview',
   apply: 'skillledger:reconcile:apply',
   rollback: 'skillledger:reconcile:rollback',
+  activity: 'skillledger:reconcile:activity',
+  discard: 'skillledger:reconcile:discard',
+  teamStatus: 'skillledger:team:status',
+  importPolicy: 'skillledger:team:import-policy',
+  importManifest: 'skillledger:team:import-manifest',
   appVersion: 'skillledger:get-app-version',
   checkUpdates: 'skillledger:check-for-updates',
   openUpdatesPage: 'skillledger:open-updates-page',
 } as const
 const updatesPage = 'https://github.com/terrytan95/skillledger/releases/latest'
+const homeDir = os.homedir()
+const teamManager = new TeamManager(homeDir)
 const reconciler = new SkillReconciler({
-  homeDir: os.homedir(),
+  homeDir,
   agentLocations: defaultAgentLocations,
+  fetchSource: net.fetch,
+  teamManager,
 })
 
 function isTrustedSender(rawUrl: string): boolean {
   try {
     const sender = new URL(rawUrl)
     if (devServerUrl) return sender.origin === new URL(devServerUrl).origin
-    return sender.protocol === 'file:' && fileURLToPath(sender).startsWith(rendererDist)
+    if (sender.protocol !== 'file:') return false
+    const relative = path.relative(rendererDist, fileURLToPath(sender))
+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
   } catch {
     return false
   }
@@ -45,7 +57,7 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 function registerIpc(): void {
   ipcMain.handle(channels.scan, async (event) => {
     assertTrustedSender(event)
-    return scanGlobalSkills()
+    return scanGlobalSkills({ sourcePins: await teamManager.sourcePins() })
   })
   ipcMain.handle(channels.preview, async (event, value: unknown) => {
     assertTrustedSender(event)
@@ -58,6 +70,26 @@ function registerIpc(): void {
   ipcMain.handle(channels.rollback, async (event, value: unknown) => {
     assertTrustedSender(event)
     return reconciler.rollback(parseOpaqueId(value))
+  })
+  ipcMain.handle(channels.activity, async (event) => {
+    assertTrustedSender(event)
+    return reconciler.activity()
+  })
+  ipcMain.handle(channels.discard, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return reconciler.discard(parseOpaqueId(value))
+  })
+  ipcMain.handle(channels.teamStatus, async (event) => {
+    assertTrustedSender(event)
+    return teamManager.status()
+  })
+  ipcMain.handle(channels.importPolicy, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return teamManager.importPolicy(parseTeamDocument(value))
+  })
+  ipcMain.handle(channels.importManifest, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return teamManager.importManifest(parseTeamDocument(value))
   })
   ipcMain.handle(channels.appVersion, (event) => {
     assertTrustedSender(event)
@@ -89,7 +121,7 @@ function parseReconcileRequest(value: unknown): ReconcileRequest {
     throw new Error('Invalid reconciliation request')
   }
   const record = value as Record<string, unknown>
-  if (Object.keys(record).some((key) => !['skillIds', 'agentIds', 'copyPolicy'].includes(key))) {
+  if (Object.keys(record).some((key) => !['skillIds', 'agentIds', 'copyPolicy', 'sourcePolicy'].includes(key))) {
     throw new Error('Invalid reconciliation request')
   }
   const parseIds = (ids: unknown): string[] | undefined => {
@@ -110,11 +142,31 @@ function parseReconcileRequest(value: unknown): ReconcileRequest {
   ) {
     throw new Error('Invalid reconciliation request')
   }
+  if (
+    record.sourcePolicy !== undefined
+    && record.sourcePolicy !== 'preserve'
+    && record.sourcePolicy !== 'restore-pinned'
+  ) {
+    throw new Error('Invalid reconciliation request')
+  }
   return {
     skillIds: parseIds(record.skillIds),
     agentIds: parseIds(record.agentIds),
     copyPolicy: record.copyPolicy as ReconcileRequest['copyPolicy'],
+    sourcePolicy: record.sourcePolicy as ReconcileRequest['sourcePolicy'],
   }
+}
+
+function parseTeamDocument(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !value
+    || Buffer.byteLength(value) > 256 * 1024
+    || value.includes('\0')
+  ) {
+    throw new Error('Invalid team document')
+  }
+  return value
 }
 
 function createWindow(): BrowserWindow {
