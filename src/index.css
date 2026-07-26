@@ -26,6 +26,8 @@
   --accent: #315f47;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--surface-raised));
   --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--ink));
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 52%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 70%, var(--muted));
   --healthy-ink: #315f47;
   --healthy-bg: #e3eee7;
   --review-ink: #85501e;
@@ -90,7 +92,24 @@
 :root[data-theme="dark"][data-accent="stone-taupe"] { --accent: #BAB0A4; --accent-soft: #37332E; }
 :root[data-theme="dark"][data-accent="lake-teal"] { --accent: #A8BCBA; --accent-soft: #2D3837; }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
 html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; overflow: hidden; background: var(--canvas); }
 button, input, select { font: inherit; }
