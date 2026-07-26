@@ -211,7 +211,15 @@ if (!app.requestSingleInstanceLock()) {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    try {
+      const recovery = await reconciler.recoverIncomplete()
+      if (recovery.failed.length) {
+        console.error(`SkillLedger could not recover journals: ${recovery.failed.join(', ')}`)
+      }
+    } catch (error) {
+      console.error('SkillLedger could not inspect recovery journals.', error)
+    }
     registerIpc()
     createWindow()
   })

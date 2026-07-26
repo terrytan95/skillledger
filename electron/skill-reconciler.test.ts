@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { access, chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -353,6 +353,75 @@ describe('SkillReconciler', () => {
           agents: [{ id: 'universal', kind: 'canonical' }],
         }],
       },
+    })
+  })
+
+  it('recovers an interrupted journal after the process is recreated', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
+    temporaryHomes.push(home)
+    const canonicalRoot = path.join(home, '.agents', 'skills')
+    const canonical = path.join(canonicalRoot, 'review-code')
+    const codexRoot = path.join(home, '.codex', 'skills')
+    const cursorRoot = path.join(home, '.cursor', 'skills')
+    const codexTarget = path.join(codexRoot, 'review-code')
+    const cursorTarget = path.join(cursorRoot, 'review-code')
+    await mkdir(canonical, { recursive: true })
+    await mkdir(codexRoot, { recursive: true })
+    await mkdir(cursorTarget, { recursive: true })
+    await writeFile(path.join(canonical, 'SKILL.md'), 'canonical content\n')
+    await writeFile(path.join(cursorTarget, 'SKILL.md'), 'local customized content\n')
+    const options = {
+      homeDir: home,
+      agentLocations: [
+        { id: 'codex', label: 'Codex', relativePath: '.codex/skills' },
+        { id: 'cursor', label: 'Cursor', relativePath: '.cursor/skills' },
+      ],
+    }
+    const reconciler = new SkillReconciler(options)
+    const preview = await reconciler.preview({ copyPolicy: 'replace-with-symlink' })
+    const journalId = randomUUID()
+    const journalDirectory = path.join(home, '.agents', '.skillledger', 'journals', journalId)
+    const cursorBackup = `${cursorTarget}.skillledger-${journalId}.backup`
+    const canonicalBefore = await fingerprint(canonical)
+    const operations = preview.operations.map((operation) => ({
+      public: operation,
+      rootKind: 'agent',
+      agentRoot: operation.agentId === 'codex' ? codexRoot : cursorRoot,
+      canonicalRoot,
+      canonicalBefore,
+      backupPath: operation.before.kind === 'missing'
+        ? null
+        : `${operation.targetPath}.skillledger-${journalId}.backup`,
+    }))
+    await mkdir(journalDirectory, { recursive: true })
+    await writeFile(path.join(journalDirectory, 'plan.json'), JSON.stringify({
+      schemaVersion: 2,
+      journalId,
+      planId: preview.planId,
+      createdAt: new Date().toISOString(),
+      operations,
+    }))
+    await writeFile(
+      path.join(journalDirectory, 'events.jsonl'),
+      `${JSON.stringify({ at: new Date().toISOString(), status: 'prepared' })}\n`,
+    )
+    await symlink(path.relative(path.dirname(codexTarget), canonical), codexTarget, 'dir')
+    await rename(cursorTarget, cursorBackup)
+    await symlink(path.relative(path.dirname(cursorTarget), canonical), cursorTarget, 'dir')
+
+    const recreated = new SkillReconciler(options)
+    const recovery = await recreated.recoverIncomplete()
+    const activity = await recreated.activity()
+
+    expect(recovery).toEqual({ recovered: [journalId], failed: [] })
+    await expect(access(codexTarget)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(path.join(cursorTarget, 'SKILL.md'), 'utf8')).toBe('local customized content\n')
+    await expect(access(cursorBackup)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(activity.entries[0]).toMatchObject({
+      journalId,
+      status: 'rolled-back',
+      rollbackAvailable: false,
+      protected: false,
     })
   })
 
