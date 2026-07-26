@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -113,5 +113,71 @@ describe('TeamManager', () => {
     }))
 
     expect(result).toMatchObject({ status: 'rejected', message: 'Manifest signature verification failed.' })
+  })
+
+  it('persists the manifest sequence high-water mark across restarts', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-team-'))
+    temporaryHomes.push(home)
+    const manager = new TeamManager(home)
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    await manager.importPolicy(JSON.stringify({
+      schemaVersion: 1,
+      teamId: 'acme',
+      name: 'Acme',
+      managedRepositories: [{ repository: 'acme/skills', paths: ['skills'] }],
+      trustedSigners: [{
+        id: 'owner-key',
+        publicKey: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+        roles: ['owner'],
+      }],
+      approvalRules: {
+        restoreCanonical: 'owner',
+        updateCanonical: 'owner',
+        replaceCopy: 'owner',
+      },
+    }))
+    const manifest = (sequence: number, sha256: string) => {
+      const payload = {
+        schemaVersion: 1,
+        teamId: 'acme',
+        sequence,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        skills: {
+          demo: {
+            repository: 'acme/skills',
+            path: 'skills/demo',
+            revision: '1'.repeat(40),
+            sha256,
+          },
+        },
+        approvals: [{ action: 'restore-canonical', skillId: 'demo' }],
+      }
+      return JSON.stringify({
+        payload,
+        signature: {
+          keyId: 'owner-key',
+          algorithm: 'ed25519',
+          value: sign(null, Buffer.from(canonicalizeTeamPayload(payload)), privateKey).toString('base64'),
+        },
+      })
+    }
+    const current = manifest(5, '2'.repeat(64))
+    expect((await manager.importManifest(current)).status).toBe('imported')
+    expect(JSON.parse(await readFile(manager.sequencePath, 'utf8'))).toMatchObject({
+      schemaVersion: 1,
+      sequence: 5,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+
+    const restarted = new TeamManager(home)
+    expect((await restarted.importManifest(current)).status).toBe('imported')
+    await expect(restarted.importManifest(manifest(4, '2'.repeat(64))))
+      .resolves.toMatchObject({ status: 'rejected', message: 'Manifest sequence cannot move backwards.' })
+    await expect(restarted.importManifest(manifest(5, '3'.repeat(64))))
+      .resolves.toMatchObject({
+        status: 'rejected',
+        message: 'Manifest sequence is already used by different content.',
+      })
   })
 })

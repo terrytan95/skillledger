@@ -1,4 +1,4 @@
-import { createPublicKey, randomUUID, verify } from 'node:crypto'
+import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import path from 'node:path'
 import type { SourcePin, TeamImportResult, TeamStatus } from '../src/types'
@@ -39,6 +39,12 @@ interface LoadedTeam {
   policy: TeamPolicy
   manifest: SignedManifest
   signer: TeamPolicy['trustedSigners'][number]
+}
+
+interface ManifestHighWater {
+  schemaVersion: 1
+  sequence: number
+  sha256: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,7 +174,7 @@ function canonicalJson(value: unknown): string {
   throw new Error('Manifest contains a non-JSON value.')
 }
 
-function parseManifest(value: unknown, policy: TeamPolicy): LoadedTeam {
+function parseManifest(value: unknown, policy: TeamPolicy, allowExpired = false): LoadedTeam {
   if (!isRecord(value) || !isRecord(value.payload) || !isRecord(value.signature)) {
     throw new Error('Signed manifest envelope is invalid.')
   }
@@ -183,7 +189,7 @@ function parseManifest(value: unknown, policy: TeamPolicy): LoadedTeam {
     || !Number.isFinite(Date.parse(payload.issuedAt))
     || typeof payload.expiresAt !== 'string'
     || !Number.isFinite(Date.parse(payload.expiresAt))
-    || Date.parse(payload.expiresAt) <= Date.now()
+    || (!allowExpired && Date.parse(payload.expiresAt) <= Date.now())
     || !isRecord(payload.skills)
     || Object.keys(payload.skills).length > 2_000
     || !Array.isArray(payload.approvals)
@@ -259,6 +265,28 @@ function parseManifest(value: unknown, policy: TeamPolicy): LoadedTeam {
   }
 }
 
+function manifestHighWater(manifest: SignedManifest): ManifestHighWater {
+  return {
+    schemaVersion: 1,
+    sequence: manifest.payload.sequence,
+    sha256: createHash('sha256').update(canonicalJson(manifest)).digest('hex'),
+  }
+}
+
+function parseManifestHighWater(value: unknown): ManifestHighWater {
+  if (
+    !isRecord(value)
+    || value.schemaVersion !== 1
+    || !Number.isSafeInteger(value.sequence)
+    || (value.sequence as number) < 1
+    || typeof value.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(value.sha256)
+  ) {
+    throw new Error('Manifest sequence high-water mark is invalid.')
+  }
+  return { schemaVersion: 1, sequence: value.sequence as number, sha256: value.sha256 }
+}
+
 function roleAllows(roles: TeamRole[], required: TeamRole): boolean {
   return roles.includes('owner') || (required === 'maintainer' && roles.includes('maintainer'))
 }
@@ -285,11 +313,14 @@ async function writeAtomic(filePath: string, json: string): Promise<void> {
 export class TeamManager {
   readonly policyPath: string
   readonly manifestPath: string
+  readonly sequencePath: string
+  private importingManifest = false
 
   constructor(homeDir: string) {
     const root = path.join(homeDir, '.agents', '.skillledger', 'team')
     this.policyPath = path.join(root, 'policy.json')
     this.manifestPath = path.join(root, 'manifest.json')
+    this.sequencePath = path.join(root, 'manifest-sequence.json')
   }
 
   async status(): Promise<TeamStatus> {
@@ -322,33 +353,37 @@ export class TeamManager {
   }
 
   async importManifest(json: string): Promise<TeamImportResult> {
+    if (this.importingManifest) {
+      return {
+        status: 'rejected',
+        message: 'Another team manifest import is already in progress.',
+        team: await this.status(),
+      }
+    }
+    this.importingManifest = true
     try {
       const policy = await this.loadPolicy()
       if (!policy) throw new Error('Import a team policy before its signed manifest.')
       const team = parseManifest(parseJson(json), policy)
-      try {
-        const existing = await this.loadTeam(policy)
-        if (team.manifest.payload.sequence < existing.manifest.payload.sequence) {
-          throw new Error('Manifest sequence cannot move backwards.')
-        }
-        if (
-          team.manifest.payload.sequence === existing.manifest.payload.sequence
-          && canonicalJson(team.manifest) !== canonicalJson(existing.manifest)
-        ) {
-          throw new Error('Manifest sequence is already used by different content.')
-        }
-      } catch (error) {
-        if (
-          (error as Error).message === 'Manifest sequence cannot move backwards.'
-          || (error as Error).message === 'Manifest sequence is already used by different content.'
-        ) {
-          throw error
-        }
+      const nextHighWater = manifestHighWater(team.manifest)
+      const highWater = await this.loadManifestHighWater(policy)
+      if (highWater && nextHighWater.sequence < highWater.sequence) {
+        throw new Error('Manifest sequence cannot move backwards.')
       }
+      if (
+        highWater
+        && nextHighWater.sequence === highWater.sequence
+        && nextHighWater.sha256 !== highWater.sha256
+      ) {
+        throw new Error('Manifest sequence is already used by different content.')
+      }
+      await writeAtomic(this.sequencePath, `${JSON.stringify(nextHighWater, null, 2)}\n`)
       await writeAtomic(this.manifestPath, `${JSON.stringify(team.manifest, null, 2)}\n`)
       return { status: 'imported', team: await this.status() }
     } catch (error) {
       return { status: 'rejected', message: (error as Error).message, team: await this.status() }
+    } finally {
+      this.importingManifest = false
     }
   }
 
@@ -420,6 +455,21 @@ export class TeamManager {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new Error('No signed team manifest is installed.')
       }
+      throw error
+    }
+  }
+
+  private async loadManifestHighWater(policy: TeamPolicy): Promise<ManifestHighWater | null> {
+    try {
+      return parseManifestHighWater(parseJson(await readFile(this.sequencePath, 'utf8')))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    try {
+      const team = parseManifest(parseJson(await readFile(this.manifestPath, 'utf8')), policy, true)
+      return manifestHighWater(team.manifest)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw error
     }
   }
