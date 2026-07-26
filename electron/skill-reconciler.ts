@@ -542,6 +542,104 @@ export class SkillReconciler {
     }
   }
 
+  async recoverIncomplete(): Promise<{ recovered: string[]; failed: string[] }> {
+    if (this.mutating) return { recovered: [], failed: [] }
+    this.mutating = true
+    try {
+      const journals = (await Promise.all((await this.journalIds()).map(async (journalId) => {
+        try {
+          const journal = await this.readJournal(journalId)
+          const statuses = new Set(journal.events.map((event) => event.status))
+          return statuses.has('verified')
+            || statuses.has('rollback-complete')
+            || statuses.has('rollback-failed')
+            || statuses.has('rollback-discard-intent')
+            || statuses.has('rollback-discarded')
+            ? null
+            : journal
+        } catch {
+          return null
+        }
+      })))
+        .filter((journal): journal is NonNullable<typeof journal> => journal !== null)
+        .sort((left, right) => right.plan.createdAt.localeCompare(left.plan.createdAt))
+      const recovered: string[] = []
+      const failed: string[] = []
+      for (const journal of journals) {
+        if (await this.recoverJournal(journal)) recovered.push(journal.plan.journalId)
+        else failed.push(journal.plan.journalId)
+      }
+      return { recovered, failed }
+    } finally {
+      this.mutating = false
+    }
+  }
+
+  private async recoverJournal(
+    journal: Awaited<ReturnType<SkillReconciler['readJournal']>>,
+  ): Promise<boolean> {
+    const { directory, plan, events } = journal
+    const restored = new Set(
+      events
+        .filter((event) => event.status === 'rolled-back' && event.operationId)
+        .map((event) => event.operationId),
+    )
+    try {
+      for (const operation of [...plan.operations].reverse()) {
+        if (restored.has(operation.public.id)) continue
+        await this.assertJournalOperationSafe(operation, plan.journalId)
+        await rm(
+          `${operation.public.targetPath}.skillledger-${plan.journalId}.tmp`,
+          { recursive: true, force: true },
+        )
+        const current = await fingerprint(operation.public.targetPath)
+        const backup = operation.backupPath
+          ? await fingerprint(operation.backupPath)
+          : { kind: 'missing', sha256: null, linkTarget: null } as PathFingerprint
+        if (fingerprintsMatch(current, operation.public.before)) {
+          if (operation.backupPath && fingerprintsMatch(backup, operation.public.before)) {
+            await rm(operation.backupPath, { recursive: true, force: false })
+          } else if (backup.kind !== 'missing') {
+            throw new Error(`Recovery backup changed for ${operation.public.skillId}.`)
+          }
+        } else {
+          if (
+            current.kind !== 'missing'
+            && !this.matchesApplied(operation, current)
+          ) {
+            throw new Error(`Recovery conflict for ${operation.public.skillId}.`)
+          }
+          if (
+            operation.backupPath
+            && !fingerprintsMatch(backup, operation.public.before)
+          ) {
+            throw new Error(`Recovery backup changed for ${operation.public.skillId}.`)
+          }
+          await this.restoreOperation(operation)
+        }
+        await syncDirectory(path.dirname(operation.public.targetPath))
+        await appendJournalEvent(directory, {
+          status: 'rolled-back',
+          operationId: operation.public.id,
+          reason: 'startup-recovery',
+        })
+      }
+      await appendJournalEvent(directory, { status: 'rollback-complete', reason: 'startup-recovery' })
+      this.planReceipts.set(plan.planId, {
+        status: 'rolled-back',
+        journalId: plan.journalId,
+      })
+      return true
+    } catch (error) {
+      await appendJournalEvent(directory, {
+        status: 'rollback-failed',
+        message: (error as Error).message,
+        reason: 'startup-recovery',
+      }).catch(() => undefined)
+      return false
+    }
+  }
+
   private async rollbackJournal(journalId: string): Promise<RollbackResult> {
     const journalDirectory = path.join(
       this.options.homeDir,
