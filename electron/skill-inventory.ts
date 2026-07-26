@@ -167,7 +167,6 @@ function deriveHealth(
   if (!canonicalExists) return { health: 'broken', healthReason: 'Canonical skill content is missing.' }
   if (agents.some((agent) => !agent.healthy)) return { health: 'broken', healthReason: 'At least one Agent link is broken or points elsewhere.' }
   if (sourceState === 'drifted') return { health: 'review', healthReason: 'Canonical content differs from its pinned source hash.' }
-  if (!tracked) return { health: 'review', healthReason: 'Installed locally but not tracked in the global source lock.' }
   if (agents.some((agent) => agent.kind === 'copy')) return { health: 'review', healthReason: 'Independent copies can drift from the canonical skill.' }
   return { health: 'healthy', healthReason: 'Canonical content and Agent links are consistent.' }
 }
