@@ -22,6 +22,7 @@ interface GitTree {
 const MAX_FILES = 500
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_BYTES = 10 * 1024 * 1024
+const DOWNLOAD_CONCURRENCY = 8
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -73,6 +74,39 @@ async function githubJson(fetchSource: FetchSource, url: string): Promise<Record
   return value
 }
 
+async function githubBytes(
+  fetchSource: FetchSource,
+  url: string,
+  expectedBytes: number,
+): Promise<Buffer> {
+  const response = await fetchSource(url, {
+    headers: {
+      Accept: 'application/octet-stream',
+      'User-Agent': 'SkillLedger',
+    },
+    credentials: 'omit',
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok) throw new Error(`GitHub returned ${response.status}.`)
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('GitHub returned an empty source file.')
+  const chunks: Buffer[] = []
+  let bytes = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    bytes += value.byteLength
+    if (bytes > expectedBytes) {
+      await reader.cancel()
+      throw new Error('GitHub source file exceeded its declared size.')
+    }
+    chunks.push(Buffer.from(value))
+  }
+  if (bytes !== expectedBytes) throw new Error('GitHub source file did not match its declared size.')
+  return Buffer.concat(chunks, bytes)
+}
+
 function parseTree(value: Record<string, unknown>): GitTreeEntry[] {
   const tree = value as GitTree
   if (tree.truncated === true) throw new Error('GitHub truncated the source tree.')
@@ -101,6 +135,13 @@ function destinationPath(root: string, relative: string): string {
     throw new Error('GitHub source path escaped the staging directory.')
   }
   return candidate
+}
+
+function rawSourceUrl(pin: SourcePin, relative: string): string {
+  const sourcePath = [...pin.path.split('/'), ...relative.split('/')]
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+  return `https://raw.githubusercontent.com/${pin.repository}/${pin.revision}/${sourcePath}`
 }
 
 async function resolveSourceTree(
@@ -173,34 +214,31 @@ export async function stageGitHubSkill(
     for (const entry of entries.filter((candidate) => candidate.type === 'tree')) {
       await mkdir(destinationPath(destination, safeRelativePath(entry.path)), { recursive: true, mode: 0o700 })
     }
-    for (const entry of files) {
-      const relative = safeRelativePath(entry.path)
-      const sha = entry.sha as string
-      const blob = await githubJson(
-        fetchSource,
-        `https://api.github.com/repos/${pin.repository}/git/blobs/${sha}`,
-      )
-      if (blob.encoding !== 'base64' || typeof blob.content !== 'string') {
-        throw new Error(`GitHub blob is not base64 encoded: ${relative}.`)
+    let nextFile = 0
+    const workers = Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, files.length) }, async () => {
+      while (nextFile < files.length) {
+        const entry = files[nextFile++]
+        const relative = safeRelativePath(entry.path)
+        const sha = entry.sha as string
+        const content = await githubBytes(fetchSource, rawSourceUrl(pin, relative), entry.size as number)
+        if (createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex') !== sha) {
+          throw new Error(`GitHub blob verification failed: ${relative}.`)
+        }
+        const filePath = destinationPath(destination, relative)
+        await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
+        const handle = await open(filePath, 'wx', entry.mode === '100755' ? 0o700 : 0o600)
+        try {
+          await handle.writeFile(content)
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        if (entry.mode === '100755') await chmod(filePath, 0o700)
       }
-      const content = Buffer.from(blob.content.replace(/\s/g, ''), 'base64')
-      if (
-        content.byteLength !== entry.size
-        || createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex') !== sha
-      ) {
-        throw new Error(`GitHub blob verification failed: ${relative}.`)
-      }
-      const filePath = destinationPath(destination, relative)
-      await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
-      const handle = await open(filePath, 'wx', entry.mode === '100755' ? 0o700 : 0o600)
-      try {
-        await handle.writeFile(content)
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
-      if (entry.mode === '100755') await chmod(filePath, 0o700)
-    }
+    })
+    const results = await Promise.allSettled(workers)
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
 
     const skillFile = await stat(path.join(destination, 'SKILL.md'))
     if (!skillFile.isFile()) throw new Error('Pinned source does not contain SKILL.md.')
