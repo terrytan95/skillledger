@@ -39,6 +39,7 @@ import type {
 } from './types'
 import { localizeHealthReason, messages, type Language, type Messages } from './i18n'
 import { demoSnapshot } from './demo'
+import appIcon from '../build/icon.svg'
 import './App.css'
 
 type HealthFilter = SkillHealth | 'all' | 'needs-review'
@@ -912,7 +913,7 @@ export default function App() {
     <div className={`app view-${view}`}>
       <header className="app-header">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><span /></span>
+          <img className="brand-mark" src={appIcon} alt="" />
           <div><strong>SkillLedger</strong><small>{copy.tagline}</small></div>
         </div>
         <nav className="primary-nav" aria-label={copy.primaryNavigation}>
