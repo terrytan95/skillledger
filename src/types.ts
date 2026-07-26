@@ -186,8 +186,35 @@ export interface AppUpdateInfo {
   available: boolean
 }
 
+export interface SourceUpdateEntry {
+  skillId: string
+  repository: string
+  path: string
+  pinnedRevision: string
+  latestRevision: string | null
+  defaultBranch: string | null
+  available: boolean
+  error: string | null
+}
+
+export interface SourceUpdateSnapshot {
+  checkedAt: string
+  entries: SourceUpdateEntry[]
+  summary: {
+    checked: number
+    available: number
+    failed: number
+  }
+}
+
+export type InventoryExportResult =
+  | { status: 'exported'; fileName: string; skillCount: number }
+  | { status: 'cancelled' }
+
 export interface SkillLedgerBridge {
   scan: () => Promise<InventorySnapshot>
+  checkSourceUpdates: () => Promise<SourceUpdateSnapshot>
+  exportInventory: () => Promise<InventoryExportResult>
   getAppVersion: () => Promise<string>
   checkForUpdates: () => Promise<AppUpdateInfo>
   openUpdatesPage: () => Promise<void>

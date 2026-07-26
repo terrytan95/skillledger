@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, open, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import type { SourcePin } from '../src/types'
+import type { SourcePin, SourceUpdateEntry, SourceUpdateSnapshot } from '../src/types'
 import { fingerprint } from './path-fingerprint'
 
 export type FetchSource = (input: string, init?: RequestInit) => Promise<Response>
@@ -23,6 +23,7 @@ const MAX_FILES = 500
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_BYTES = 10 * 1024 * 1024
 const DOWNLOAD_CONCURRENCY = 8
+const SOURCE_CHECK_CONCURRENCY = 4
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -144,10 +145,10 @@ function rawSourceUrl(pin: SourcePin, relative: string): string {
   return `https://raw.githubusercontent.com/${pin.repository}/${pin.revision}/${sourcePath}`
 }
 
-async function resolveSourceTree(
+async function resolveSourceTreeSha(
   pin: SourcePin,
   fetchSource: FetchSource,
-): Promise<GitTreeEntry[]> {
+): Promise<string> {
   const base = `https://api.github.com/repos/${pin.repository}`
   const commit = await githubJson(fetchSource, `${base}/git/commits/${pin.revision}`)
   if (commit.sha !== pin.revision) throw new Error('GitHub commit did not match the pinned revision.')
@@ -165,7 +166,100 @@ async function resolveSourceTree(
     }
     treeSha = next.sha
   }
-  return parseTree(await githubJson(fetchSource, `${base}/git/trees/${treeSha}?recursive=1`))
+  return treeSha
+}
+
+async function resolveSourceTree(
+  pin: SourcePin,
+  fetchSource: FetchSource,
+): Promise<GitTreeEntry[]> {
+  const treeSha = await resolveSourceTreeSha(pin, fetchSource)
+  return parseTree(await githubJson(
+    fetchSource,
+    `https://api.github.com/repos/${pin.repository}/git/trees/${treeSha}?recursive=1`,
+  ))
+}
+
+async function repositoryHead(
+  repository: string,
+  fetchSource: FetchSource,
+): Promise<{ defaultBranch: string; revision: string }> {
+  const base = `https://api.github.com/repos/${repository}`
+  const metadata = await githubJson(fetchSource, base)
+  const defaultBranch = metadata.default_branch
+  if (typeof defaultBranch !== 'string' || !defaultBranch || defaultBranch.length > 255) {
+    throw new Error('GitHub repository has no valid default branch.')
+  }
+  const commit = await githubJson(fetchSource, `${base}/commits/${encodeURIComponent(defaultBranch)}`)
+  if (typeof commit.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(commit.sha)) {
+    throw new Error('GitHub default branch has no valid commit.')
+  }
+  return { defaultBranch, revision: commit.sha.toLowerCase() }
+}
+
+export async function discoverGitHubSourceUpdates(
+  pins: Record<string, SourcePin>,
+  fetchSource: FetchSource,
+): Promise<SourceUpdateSnapshot> {
+  const sources = Object.entries(pins).sort(([left], [right]) => left.localeCompare(right))
+  const entries: SourceUpdateEntry[] = new Array(sources.length)
+  const heads = new Map<string, Promise<{ defaultBranch: string; revision: string }>>()
+  let nextSource = 0
+  const workers = Array.from({ length: Math.min(SOURCE_CHECK_CONCURRENCY, sources.length) }, async () => {
+    while (nextSource < sources.length) {
+      const index = nextSource++
+      const [skillId, pinValue] = sources[index]
+      const pin = normalizeSourcePin(pinValue)
+      if (!pin) throw new Error(`Pinned GitHub source is invalid: ${skillId}.`)
+      let defaultBranch: string | null = null
+      let latestRevision: string | null = null
+      try {
+        let head = heads.get(pin.repository)
+        if (!head) {
+          head = repositoryHead(pin.repository, fetchSource)
+          heads.set(pin.repository, head)
+        }
+        ({ defaultBranch, revision: latestRevision } = await head)
+        const [latestTree, pinnedTree] = latestRevision === pin.revision
+          ? [null, null]
+          : await Promise.all([
+            resolveSourceTreeSha({ ...pin, revision: latestRevision }, fetchSource),
+            resolveSourceTreeSha(pin, fetchSource),
+          ])
+        entries[index] = {
+          skillId,
+          repository: pin.repository,
+          path: pin.path,
+          pinnedRevision: pin.revision,
+          latestRevision,
+          defaultBranch,
+          available: latestTree !== pinnedTree,
+          error: null,
+        }
+      } catch (error) {
+        entries[index] = {
+          skillId,
+          repository: pin.repository,
+          path: pin.path,
+          pinnedRevision: pin.revision,
+          latestRevision,
+          defaultBranch,
+          available: false,
+          error: (error as Error).message,
+        }
+      }
+    }
+  })
+  await Promise.all(workers)
+  return {
+    checkedAt: new Date().toISOString(),
+    entries,
+    summary: {
+      checked: entries.length,
+      available: entries.filter((entry) => entry.available).length,
+      failed: entries.filter((entry) => entry.error).length,
+    },
+  }
 }
 
 export async function stageGitHubSkill(
