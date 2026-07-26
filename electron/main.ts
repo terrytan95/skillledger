@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
+import { checkForUpdates } from './app-update'
 import { defaultAgentLocations, scanGlobalSkills } from './skill-inventory'
 import { SkillReconciler } from './skill-reconciler'
 import type { ReconcileRequest } from '../src/types'
@@ -15,7 +16,11 @@ const channels = {
   preview: 'skillledger:reconcile:preview',
   apply: 'skillledger:reconcile:apply',
   rollback: 'skillledger:reconcile:rollback',
+  appVersion: 'skillledger:get-app-version',
+  checkUpdates: 'skillledger:check-for-updates',
+  openUpdatesPage: 'skillledger:open-updates-page',
 } as const
+const updatesPage = 'https://github.com/terrytan95/skillledger/releases/latest'
 const reconciler = new SkillReconciler({
   homeDir: os.homedir(),
   agentLocations: defaultAgentLocations,
@@ -31,28 +36,40 @@ function isTrustedSender(rawUrl: string): boolean {
   }
 }
 
-function registerIpc(): void {
-  const assertTrusted = (event: Electron.IpcMainInvokeEvent): void => {
-    if (!event.senderFrame || !isTrustedSender(event.senderFrame.url)) {
-      throw new Error('Untrusted IPC sender')
-    }
+function assertTrustedSender(event: IpcMainInvokeEvent): void {
+  if (!event.senderFrame || !isTrustedSender(event.senderFrame.url)) {
+    throw new Error('Untrusted IPC sender')
   }
+}
 
+function registerIpc(): void {
   ipcMain.handle(channels.scan, async (event) => {
-    assertTrusted(event)
+    assertTrustedSender(event)
     return scanGlobalSkills()
   })
   ipcMain.handle(channels.preview, async (event, value: unknown) => {
-    assertTrusted(event)
+    assertTrustedSender(event)
     return reconciler.preview(parseReconcileRequest(value))
   })
   ipcMain.handle(channels.apply, async (event, value: unknown) => {
-    assertTrusted(event)
+    assertTrustedSender(event)
     return reconciler.apply(parseOpaqueId(value))
   })
   ipcMain.handle(channels.rollback, async (event, value: unknown) => {
-    assertTrusted(event)
+    assertTrustedSender(event)
     return reconciler.rollback(parseOpaqueId(value))
+  })
+  ipcMain.handle(channels.appVersion, (event) => {
+    assertTrustedSender(event)
+    return app.getVersion()
+  })
+  ipcMain.handle(channels.checkUpdates, async (event) => {
+    assertTrustedSender(event)
+    return checkForUpdates(app.getVersion(), net.fetch)
+  })
+  ipcMain.handle(channels.openUpdatesPage, async (event) => {
+    assertTrustedSender(event)
+    await shell.openExternal(updatesPage)
   })
 }
 

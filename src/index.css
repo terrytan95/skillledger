@@ -1,7 +1,8 @@
 :root {
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
   color: #20221f;
   background: #f3f1eb;
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -10,20 +11,75 @@
   --line: #dedbd2;
   --surface: #fbfaf7;
   --surface-raised: #ffffff;
+  --canvas: #f3f1eb;
+  --chrome: #f7f5f0;
+  --header: rgba(251, 250, 247, .96);
+  --rail: #ece9e1;
+  --row-hover: rgba(255, 255, 255, .72);
+  --subtle: #eef1eb;
+  --code-bg: #efede7;
+  --copy-secondary: #5f635c;
+  --monogram: #373b36;
+  --monogram-ink: #ffffff;
+  --scrim: rgba(30, 31, 29, .2);
+  --panel-shadow: rgba(32, 34, 31, .12);
   --accent: #315f47;
-  --accent-soft: #e5eee8;
-  --warning: #9a632d;
-  --danger: #a84742;
-  --blue: #3d5f89;
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--surface-raised));
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--ink));
+  --healthy-ink: #315f47;
+  --healthy-bg: #e3eee7;
+  --review-ink: #85501e;
+  --review-bg: #f3e7d6;
+  --missing-ink: #7a5d2b;
+  --missing-bg: #eee9d9;
+  --broken-ink: #973f3c;
+  --broken-bg: #f3dfdd;
 }
+
+:root[data-theme="dark"] {
+  color: #eeeee9;
+  background: #1b1d19;
+  color-scheme: dark;
+  --ink: #eeeee9;
+  --muted: #9a9e95;
+  --line: #3a3d37;
+  --surface: #22241f;
+  --surface-raised: #2a2d27;
+  --canvas: #1b1d19;
+  --chrome: #20221e;
+  --header: rgba(32, 34, 30, .96);
+  --rail: #181a17;
+  --row-hover: rgba(255, 255, 255, .055);
+  --subtle: #292d27;
+  --code-bg: #181a17;
+  --copy-secondary: #bdc1b8;
+  --monogram: #d8dbd3;
+  --monogram-ink: #20221f;
+  --scrim: rgba(0, 0, 0, .46);
+  --panel-shadow: rgba(0, 0, 0, .32);
+  --healthy-ink: #9bc9aa;
+  --healthy-bg: #263b2d;
+  --review-ink: #e3bc86;
+  --review-bg: #433423;
+  --missing-ink: #d3bd84;
+  --missing-bg: #393529;
+  --broken-ink: #e5a09c;
+  --broken-bg: #472b2a;
+}
+
+:root[data-accent="forest"] { --accent: #315f47; }
+:root[data-accent="ocean"] { --accent: #3d6f91; }
+:root[data-accent="violet"] { --accent: #705b9a; }
+:root[data-accent="amber"] { --accent: #9a632d; }
+:root[data-accent="rose"] { --accent: #9c4f65; }
 
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
-body { min-height: 100vh; overflow: hidden; }
+body { min-height: 100vh; overflow: hidden; background: var(--canvas); }
 button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 2px solid #527b64;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
