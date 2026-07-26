@@ -707,10 +707,6 @@ function SettingsView({
               <option value="zh-CN">{copy.simplifiedChinese}</option>
             </select>
           </label>
-          <div className="setting-row font-row">
-            <div><strong>{copy.chineseFont}</strong><span>{copy.chineseFontDescription}</span></div>
-            <span className="font-sample" lang="zh-CN">技能账本</span>
-          </div>
         </section>
 
         <section className="settings-section">

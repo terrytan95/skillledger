@@ -328,7 +328,6 @@ main { min-height: 0; overflow: hidden; }
 :root[data-theme="dark"] .swatch-smoky-violet { background: #B8B1C2; }
 :root[data-theme="dark"] .swatch-stone-taupe { background: #BAB0A4; }
 :root[data-theme="dark"] .swatch-lake-teal { background: #A8BCBA; }
-.font-sample { color: var(--accent); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; font-size: 18px; font-weight: 650; letter-spacing: .02em; }
 .switch-row { position: relative; cursor: pointer; }
 .switch-row input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .switch {
