@@ -293,7 +293,7 @@ main { min-height: 0; overflow: hidden; }
   font-weight: 700;
 }
 .segmented-control button.selected { color: var(--ink); background: var(--surface-raised); box-shadow: 0 1px 3px var(--panel-shadow); }
-.accent-options { display: flex; align-items: center; gap: 8px; }
+.accent-options { max-width: 260px; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
 .accent-options button { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 50%; }
 .accent-options button.selected { border-color: var(--ink); }
 .accent-swatch { width: 18px; height: 18px; display: block; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
@@ -302,6 +302,22 @@ main { min-height: 0; overflow: hidden; }
 .swatch-violet { background: #705b9a; }
 .swatch-amber { background: #9a632d; }
 .swatch-rose { background: #9c4f65; }
+.swatch-mist-pine { background: #596C63; }
+.swatch-haze-blue { background: #5C6D7E; }
+.swatch-red-bean { background: #775F67; }
+.swatch-clay-blush { background: #7B625C; }
+.swatch-moss { background: #626A52; }
+.swatch-smoky-violet { background: #696276; }
+.swatch-stone-taupe { background: #6F665B; }
+.swatch-lake-teal { background: #587170; }
+:root[data-theme="dark"] .swatch-mist-pine { background: #A5B4AD; }
+:root[data-theme="dark"] .swatch-haze-blue { background: #AAB7C4; }
+:root[data-theme="dark"] .swatch-red-bean { background: #C5AEB6; }
+:root[data-theme="dark"] .swatch-clay-blush { background: #C8B1AA; }
+:root[data-theme="dark"] .swatch-moss { background: #B3B99C; }
+:root[data-theme="dark"] .swatch-smoky-violet { background: #B8B1C2; }
+:root[data-theme="dark"] .swatch-stone-taupe { background: #BAB0A4; }
+:root[data-theme="dark"] .swatch-lake-teal { background: #A8BCBA; }
 .font-sample { color: var(--accent); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; font-size: 18px; font-weight: 650; letter-spacing: .02em; }
 .switch-row { position: relative; cursor: pointer; }
 .switch-row input { position: absolute; width: 1px; height: 1px; opacity: 0; }
