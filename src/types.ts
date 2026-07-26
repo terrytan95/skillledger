@@ -118,8 +118,17 @@ export type RollbackResult =
   | { status: 'already-rolled-back'; journalId: string; snapshot: InventorySnapshot }
   | { status: 'rejected' | 'rollback-incomplete'; journalId: string; error: ReconcileError }
 
+export interface AppUpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  available: boolean
+}
+
 export interface SkillLedgerBridge {
   scan: () => Promise<InventorySnapshot>
+  getAppVersion: () => Promise<string>
+  checkForUpdates: () => Promise<AppUpdateInfo>
+  openUpdatesPage: () => Promise<void>
   reconcile: {
     preview: (request?: ReconcileRequest) => Promise<ReconciliationPreview>
     apply: (planId: string) => Promise<ApplyResult>
