@@ -9,8 +9,9 @@ SkillLedger makes a global skill library understandable and safe to maintain acr
 1. Open the app and scan the local machine.
 2. See inventory health and provenance at a glance.
 3. Select a skill to inspect every destination.
-4. Preview a reconciliation plan.
-5. Apply only after the app can journal and roll back the change.
+4. Preview a hash-bound reconciliation plan for that skill.
+5. Resolve blockers or explicitly approve replacing independent copies.
+6. Apply through the journaled pipeline, with verification and rollback available.
 
 ## Scope
 
@@ -23,13 +24,15 @@ SkillLedger makes a global skill library understandable and safe to maintain acr
 - Selected Ledger desktop interface.
 - Secure read-only Electron bridge.
 
-### Safe reconciliation — next
+### Safe reconciliation — shipped
 
 - Content hashing and drift detail.
 - Desired-state plan generation.
 - Dry-run diff grouped by skill and destination.
 - Append-only operation journal.
 - Atomic apply, verification, and rollback.
+
+Independent copies remain untouched by default. Missing canonical content is reported as blocked because source restoration belongs to the later source-maintenance stage.
 
 ### Source maintenance — later
 

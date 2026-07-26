@@ -12,7 +12,12 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react'
-import type { InventorySnapshot, SkillHealth, SkillRecord } from './types'
+import type {
+  InventorySnapshot,
+  ReconciliationPreview,
+  SkillHealth,
+  SkillRecord,
+} from './types'
 import { demoSnapshot } from './demo'
 import './App.css'
 
@@ -133,20 +138,144 @@ function LedgerView({
   )
 }
 
-function PlanPanel({ snapshot, onClose }: { snapshot: InventorySnapshot; onClose: () => void }) {
-  const attention = snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken
+function PlanPanel({
+  liveMode,
+  onClose,
+  onSnapshot,
+  skillId,
+}: {
+  liveMode: boolean
+  onClose: () => void
+  onSnapshot: (snapshot: InventorySnapshot) => void
+  skillId: string | undefined
+}) {
+  const [preview, setPreview] = useState<ReconciliationPreview | null>(null)
+  const [replaceCopies, setReplaceCopies] = useState(false)
+  const [working, setWorking] = useState(true)
+  const [message, setMessage] = useState('')
+  const [journalId, setJournalId] = useState<string | null>(null)
+
+  const loadPreview = useCallback(async (replace: boolean) => {
+    if (!window.skillLedger || !liveMode || !skillId) {
+      setWorking(false)
+      setMessage('Live scan is required before creating a reconciliation plan.')
+      return
+    }
+    setWorking(true)
+    setMessage('')
+    try {
+      setPreview(await window.skillLedger.reconcile.preview({
+        skillIds: [skillId],
+        copyPolicy: replace ? 'replace-with-symlink' : 'preserve',
+      }))
+    } catch (error) {
+      setMessage((error as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }, [liveMode, skillId])
+
+  useEffect(() => { void loadPreview(false) }, [loadPreview])
+
+  const applyPlan = async () => {
+    if (!preview || preview.status !== 'ready' || !window.skillLedger) return
+    setWorking(true)
+    setMessage('')
+    try {
+      const result = await window.skillLedger.reconcile.apply(preview.planId)
+      if (result.status === 'applied' || result.status === 'already-applied') {
+        onSnapshot(result.snapshot)
+        setJournalId(result.journalId)
+        setMessage(result.status === 'applied' ? 'Applied and verified. Rollback remains available.' : 'This plan was already applied.')
+      } else if (result.status === 'rolled-back') {
+        onSnapshot(result.snapshot)
+        setMessage(`Apply failed safely and was rolled back: ${result.error.message}`)
+      } else {
+        setMessage(result.error.message)
+      }
+    } catch (error) {
+      setMessage((error as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const rollback = async () => {
+    if (!journalId || !window.skillLedger) return
+    setWorking(true)
+    setMessage('')
+    try {
+      const result = await window.skillLedger.reconcile.rollback(journalId)
+      if (result.status === 'rolled-back' || result.status === 'already-rolled-back') {
+        onSnapshot(result.snapshot)
+        setMessage(result.status === 'rolled-back' ? 'Previous Agent state restored and verified.' : 'This journal was already rolled back.')
+        setJournalId(null)
+        await loadPreview(replaceCopies)
+      } else {
+        setMessage(result.error.message)
+      }
+    } catch (error) {
+      setMessage((error as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const operationLabel = {
+    'create-symlink': 'Create Agent link',
+    'repair-symlink': 'Repair broken link',
+    'replace-copy': 'Replace independent copy',
+  } as const
+  const changeCount = preview?.operations.length ?? 0
+  const copyBlockers = preview?.blockers.filter((blocker) => blocker.code === 'copy-requires-confirmation').length ?? 0
+
   return (
     <div className="plan-backdrop" role="presentation" onMouseDown={onClose}>
       <aside className="plan-panel" role="dialog" aria-modal="true" aria-label="Reconciliation preview" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="plan-title"><div><p className="eyebrow">Preview only</p><h2>Reconciliation plan</h2></div><button className="icon-button" onClick={onClose} aria-label="Close preview"><X size={18} /></button></div>
-        <div className="plan-summary"><strong>{attention}</strong><span>items need review before any change</span></div>
-        <ol className="plan-steps">
-          <li><span>01</span><div><strong>Repair broken links</strong><p>{snapshot.summary.broken} direct integrity issues</p></div></li>
-          <li><span>02</span><div><strong>Restore tracked skills</strong><p>{snapshot.summary.missing} lock entries missing on disk</p></div></li>
-          <li><span>03</span><div><strong>Review independent copies</strong><p>{snapshot.summary.review} items may drift from canonical content</p></div></li>
-        </ol>
-        <div className="plan-safety"><ShieldCheck size={18} /><p>Apply is intentionally disabled in this first release. Mutation ships with a rollback journal and command-level tests.</p></div>
-        <button className="primary-button wide" disabled>Apply plan — coming next</button>
+        <div className="plan-title"><div><p className="eyebrow">Hash-bound preview · {skillId}</p><h2>Reconciliation plan</h2></div><button className="icon-button" onClick={onClose} aria-label="Close preview"><X size={18} /></button></div>
+        <div className="plan-scroll">
+          <div className="plan-summary"><strong>{working && !preview ? '—' : changeCount}</strong><span>{preview?.status === 'blocked' ? `${preview.blockers.length} blocker${preview.blockers.length === 1 ? '' : 's'} must be resolved` : 'verified changes ready for review'}</span></div>
+          {preview?.operations.length ? (
+            <ol className="plan-steps">
+              {preview.operations.map((operation, index) => (
+                <li key={operation.id}>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <div><strong>{operationLabel[operation.kind]}</strong><p>{operation.skillId} · {operation.agentId}</p></div>
+                </li>
+              ))}
+            </ol>
+          ) : !working && <p className="plan-empty">{preview?.status === 'noop' ? 'Everything already matches the canonical library.' : 'No safe changes are currently available.'}</p>}
+          {preview?.blockers.length ? (
+            <div className="plan-blockers">
+              <span className="section-label">Needs a decision</span>
+              {preview.blockers.map((blocker) => (
+                <div key={`${blocker.skillId}-${blocker.agentId}`}><AlertTriangle size={14} /><p><strong>{blocker.skillId} · {blocker.agentId}</strong>{blocker.message}</p></div>
+              ))}
+            </div>
+          ) : null}
+          {copyBlockers > 0 || replaceCopies ? (
+            <label className="copy-confirmation">
+              <input
+                type="checkbox"
+                checked={replaceCopies}
+                onChange={(event) => {
+                  const checked = event.target.checked
+                  setReplaceCopies(checked)
+                  void loadPreview(checked)
+                }}
+              />
+              <span><strong>Replace independent copies</strong><small>Back up local content, then link it to the canonical skill.</small></span>
+            </label>
+          ) : null}
+          <div className="plan-safety"><ShieldCheck size={18} /><p>Every plan is bound to SHA-256 preconditions. Journal and backups are durable before same-volume atomic swaps; failed verification rolls back automatically.</p></div>
+          {message && <p className="plan-message" aria-live="polite">{message}</p>}
+        </div>
+        <div className="plan-actions">
+          {journalId && <button className="secondary-button wide" onClick={() => void rollback()} disabled={working}>Rollback last apply</button>}
+          <button className="primary-button wide" onClick={() => void applyPlan()} disabled={working || preview?.status !== 'ready' || changeCount === 0}>
+            {working ? 'Working…' : `Apply ${changeCount || ''} change${changeCount === 1 ? '' : 's'}`}
+          </button>
+        </div>
       </aside>
     </div>
   )
@@ -241,7 +370,17 @@ export default function App() {
         <span><span className="footer-dot" />Scanned {new Date(snapshot.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         <span>{snapshot.warnings.length ? `${snapshot.warnings.length} scan warning` : 'Read-only inventory mode'}</span>
       </footer>
-      {planOpen && <PlanPanel snapshot={snapshot} onClose={() => setPlanOpen(false)} />}
+      {planOpen && (
+        <PlanPanel
+          liveMode={liveMode}
+          onClose={() => setPlanOpen(false)}
+          skillId={selected?.id}
+          onSnapshot={(next) => {
+            setSnapshot(next)
+            setSelectedId((current) => next.skills.some((skill) => skill.id === current) ? current : next.skills[0]?.id ?? '')
+          }}
+        />
+      )}
     </div>
   )
 }
