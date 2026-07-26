@@ -4,7 +4,9 @@ import {
   AlertTriangle,
   ArrowRight,
   Boxes,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Command,
   Download,
   ExternalLink,
@@ -674,23 +676,44 @@ function SettingsView({
               ))}
             </div>
           </div>
-          <div className="setting-row">
+          <div className="setting-row accent-row">
             <div><strong>{copy.accentColor}</strong><span>{copy.accentDescription}</span></div>
-            <div className="accent-options" role="radiogroup" aria-label={copy.accentColor}>
-              {accents.map((accent) => (
-                <button
-                  key={accent}
-                  className={preferences.accent === accent ? 'selected' : ''}
-                  role="radio"
-                  aria-checked={preferences.accent === accent}
-                  aria-label={accentLabels[accent]}
-                  title={accentLabels[accent]}
-                  onClick={() => onPreference('accent', accent)}
-                >
-                  <span className={`accent-swatch swatch-${accent}`} />
-                </button>
-              ))}
-            </div>
+            <details
+              className="accent-select"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.removeAttribute('open')
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.currentTarget.removeAttribute('open')
+                  event.currentTarget.querySelector('summary')?.focus()
+                }
+              }}
+            >
+              <summary aria-label={`${copy.accentColor}: ${accentLabels[preferences.accent]}`}>
+                <span className={`accent-swatch swatch-${preferences.accent}`} aria-hidden="true" />
+                <strong>{accentLabels[preferences.accent]}</strong>
+                <ChevronDown size={14} aria-hidden="true" />
+              </summary>
+              <div className="accent-menu" role="radiogroup" aria-label={copy.accentColor}>
+                {accents.map((accent) => (
+                  <button
+                    key={accent}
+                    className={preferences.accent === accent ? 'selected' : ''}
+                    role="radio"
+                    aria-checked={preferences.accent === accent}
+                    onClick={(event) => {
+                      onPreference('accent', accent)
+                      event.currentTarget.closest('details')?.removeAttribute('open')
+                    }}
+                  >
+                    <span className={`accent-swatch swatch-${accent}`} aria-hidden="true" />
+                    <span>{accentLabels[accent]}</span>
+                    {preferences.accent === accent && <Check size={13} aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            </details>
           </div>
         </section>
 
