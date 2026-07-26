@@ -25,11 +25,6 @@
     "dist": "yarn build:app && electron-builder",
     "preview": "vite preview"
   },
-  "dependencies": {
-    "lucide-react": "^1.27.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
-  },
   "devDependencies": {
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.2",
@@ -37,6 +32,9 @@
     "@vitejs/plugin-react": "^6.0.4",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
+    "lucide-react": "^1.27.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vite-plugin-electron": "^1.1.0",

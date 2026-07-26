@@ -3,6 +3,7 @@
   "appId": "com.terrytan.skillledger",
   "productName": "SkillLedger",
   "asar": true,
+  "electronLanguages": ["en", "zh_CN"],
   "forceCodeSigning": true,
   "directories": { "output": "release/${version}" },
   "files": ["dist", "dist-electron"],
