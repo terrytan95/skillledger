@@ -24,14 +24,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
 }
 .app-header button, .app-header input, .app-header select { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 248px; }
-.brand-mark {
-  position: relative;
-  width: 30px; height: 30px; display: grid; place-items: center;
-  border: 1px solid var(--accent); background: var(--accent);
-}
-.brand-mark::before, .brand-mark span { content: ""; display: block; border: 1px solid white; }
-.brand-mark::before { width: 14px; height: 14px; }
-.brand-mark span { position: absolute; width: 6px; height: 6px; background: var(--accent); }
+.brand-mark { width: 30px; height: 30px; display: block; flex: 0 0 auto; }
 .brand div { display: grid; gap: 2px; }
 .brand strong { font-size: 15px; letter-spacing: -.02em; }
 .brand small { color: var(--muted); font-size: 10px; }
