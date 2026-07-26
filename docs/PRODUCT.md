@@ -20,7 +20,7 @@ SkillLedger makes a global skill library understandable and safe to maintain acr
 - Canonical library and lock-file discovery.
 - Seven built-in agent locations.
 - Health classification.
-- Three selectable UI directions.
+- Selected Ledger desktop interface.
 - Secure read-only Electron bridge.
 
 ### Safe reconciliation — next
