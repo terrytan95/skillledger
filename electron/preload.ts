@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ActivitySnapshot,
+  AppUpdateInfo,
   ApplyResult,
   DiscardResult,
   InventorySnapshot,
@@ -14,6 +15,9 @@ import type {
 
 const bridge: SkillLedgerBridge = {
   scan: () => ipcRenderer.invoke('skillledger:scan') as Promise<InventorySnapshot>,
+  getAppVersion: () => ipcRenderer.invoke('skillledger:get-app-version') as Promise<string>,
+  checkForUpdates: () => ipcRenderer.invoke('skillledger:check-for-updates') as Promise<AppUpdateInfo>,
+  openUpdatesPage: () => ipcRenderer.invoke('skillledger:open-updates-page') as Promise<void>,
   reconcile: {
     preview: (request?: ReconcileRequest) => ipcRenderer.invoke(
       'skillledger:reconcile:preview',

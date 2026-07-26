@@ -180,8 +180,17 @@ export type TeamImportResult =
   | { status: 'imported'; team: TeamStatus }
   | { status: 'rejected'; message: string; team: TeamStatus }
 
+export interface AppUpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  available: boolean
+}
+
 export interface SkillLedgerBridge {
   scan: () => Promise<InventorySnapshot>
+  getAppVersion: () => Promise<string>
+  checkForUpdates: () => Promise<AppUpdateInfo>
+  openUpdatesPage: () => Promise<void>
   reconcile: {
     preview: (request?: ReconcileRequest) => Promise<ReconciliationPreview>
     apply: (planId: string) => Promise<ApplyResult>
