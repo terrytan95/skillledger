@@ -6,11 +6,6 @@ import {
   Boxes,
   CheckCircle2,
   Command,
-  Database,
-  GitBranch,
-  Grid2X2,
-  LayoutList,
-  Network,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -21,7 +16,6 @@ import type { InventorySnapshot, SkillHealth, SkillRecord } from './types'
 import { demoSnapshot } from './demo'
 import './App.css'
 
-type Design = 'ledger' | 'atlas' | 'harbor'
 type HealthFilter = SkillHealth | 'all'
 
 const healthLabel: Record<SkillHealth, string> = {
@@ -139,98 +133,6 @@ function LedgerView({
   )
 }
 
-function AtlasView({
-  skills,
-  selected,
-  onSelect,
-  snapshot,
-}: {
-  skills: SkillRecord[]
-  selected: SkillRecord | undefined
-  onSelect: (id: string) => void
-  snapshot: InventorySnapshot
-}) {
-  return (
-    <div className="atlas-shell">
-      <section className="metric-strip" aria-label="Inventory metrics">
-        <div><span>Tracked skills</span><strong>{snapshot.summary.total}</strong><small>Across the global library</small></div>
-        <div><span>Healthy</span><strong>{snapshot.summary.healthy}</strong><small>Ready for every linked Agent</small></div>
-        <div><span>Needs attention</span><strong>{snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken}</strong><small>Drift, copies, or missing content</small></div>
-        <div><span>Install reach</span><strong>{snapshot.summary.agentLinks}</strong><small>Total resolved destinations</small></div>
-      </section>
-      <div className="atlas-workspace">
-        <section className="atlas-table" aria-label="Dense skill table">
-          <div className="table-heading">
-            <span>Skill</span><span>State</span><span>Source</span><span>Agents</span><span>Tracked</span>
-          </div>
-          {skills.map((skill) => (
-            <button
-              className={`table-row ${selected?.id === skill.id ? 'selected' : ''}`}
-              key={skill.id}
-              onClick={() => onSelect(skill.id)}
-            >
-              <span><strong>{skill.name}</strong><small>{skill.description}</small></span>
-              <StatusChip health={skill.health} />
-              <span>{skill.source ?? 'Local only'}</span>
-              <span>{skill.agents.length}</span>
-              <span>{skill.updatedAt ? new Date(skill.updatedAt).toLocaleDateString() : '—'}</span>
-            </button>
-          ))}
-        </section>
-        <SkillInspector skill={selected} />
-      </div>
-    </div>
-  )
-}
-
-function HarborView({
-  skills,
-  selected,
-  onSelect,
-}: {
-  skills: SkillRecord[]
-  selected: SkillRecord | undefined
-  onSelect: (id: string) => void
-}) {
-  const sources = [...new Set(skills.map((skill) => skill.source ?? 'Local'))].slice(0, 6)
-  const agents = [...new Set(skills.flatMap((skill) => skill.agents.map((agent) => agent.label)))].slice(0, 9)
-  return (
-    <div className="harbor-shell">
-      <div className="harbor-intro">
-        <div><p className="eyebrow">Reconciliation map</p><h1>One library, every Agent.</h1></div>
-        <p>Follow provenance from source to canonical skill to destination. Select a skill to inspect its route.</p>
-      </div>
-      <div className="harbor-board">
-        <section className="harbor-column">
-          <div className="column-heading"><GitBranch size={17} /><span>Sources</span><small>{sources.length}</small></div>
-          {sources.map((source) => <div className="source-node" key={source}><Database size={15} /><span>{source}</span></div>)}
-        </section>
-        <section className="harbor-column harbor-skills">
-          <div className="column-heading"><Boxes size={17} /><span>Canonical library</span><small>{skills.length}</small></div>
-          <div className="harbor-skill-grid">
-            {skills.map((skill) => (
-              <button
-                className={`harbor-skill ${selected?.id === skill.id ? 'selected' : ''}`}
-                key={skill.id}
-                onClick={() => onSelect(skill.id)}
-              >
-                <span className={`health-dot status-${skill.health}`} />
-                <strong>{skill.name}</strong>
-                <small>{skill.agents.length} routes</small>
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="harbor-column">
-          <div className="column-heading"><Network size={17} /><span>Destinations</span><small>{agents.length}</small></div>
-          {agents.map((agent) => <div className="agent-node" key={agent}><span>{agent.slice(0, 1)}</span><strong>{agent}</strong></div>)}
-        </section>
-      </div>
-      <div className="harbor-detail"><SkillInspector skill={selected} /></div>
-    </div>
-  )
-}
-
 function PlanPanel({ snapshot, onClose }: { snapshot: InventorySnapshot; onClose: () => void }) {
   const attention = snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken
   return (
@@ -252,7 +154,6 @@ function PlanPanel({ snapshot, onClose }: { snapshot: InventorySnapshot; onClose
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<InventorySnapshot>(demoSnapshot)
-  const [design, setDesign] = useState<Design>('ledger')
   const [query, setQuery] = useState('')
   const [health, setHealth] = useState<HealthFilter>('all')
   const [selectedId, setSelectedId] = useState(demoSnapshot.skills[0]?.id ?? '')
@@ -290,7 +191,7 @@ export default function App() {
   const selected = snapshot.skills.find((skill) => skill.id === selectedId) ?? skills[0]
 
   return (
-    <div className="app" data-design={design}>
+    <div className="app">
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><span /></span>
@@ -310,11 +211,9 @@ export default function App() {
       </header>
 
       <div className="control-bar">
-        <div className="design-switcher" aria-label="UI direction">
-          <span>Interface</span>
-          <button className={design === 'ledger' ? 'active' : ''} onClick={() => setDesign('ledger')}><LayoutList size={14} />Ledger</button>
-          <button className={design === 'atlas' ? 'active' : ''} onClick={() => setDesign('atlas')}><Grid2X2 size={14} />Atlas</button>
-          <button className={design === 'harbor' ? 'active' : ''} onClick={() => setDesign('harbor')}><Network size={14} />Harbor</button>
+        <div className="control-context">
+          <Boxes size={16} aria-hidden="true" />
+          <span><strong>Global inventory</strong><small>Ledger view</small></span>
         </div>
         <label className="search-field">
           <Search size={16} aria-hidden="true" />
@@ -335,9 +234,7 @@ export default function App() {
       </div>
 
       <main>
-        {design === 'ledger' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} />}
-        {design === 'atlas' && <AtlasView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} />}
-        {design === 'harbor' && <HarborView skills={skills} selected={selected} onSelect={setSelectedId} />}
+        <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} />
       </main>
 
       <footer className="app-footer">

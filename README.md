@@ -16,13 +16,9 @@ Agent skill installers are good at adding packages. SkillLedger focuses on the m
 
 The current foundation is deliberately read-only. Scanning is real; reconciliation is preview-only until the rollback journal is implemented.
 
-## UI directions
+## Interface
 
-The app contains three complete, switchable interface directions:
-
-1. **Ledger** — calm three-pane library, recommended for daily use.
-2. **Atlas** — compact metrics and table, optimized for large inventories.
-3. **Harbor** — source-to-canonical-to-agent map, optimized for provenance.
+SkillLedger uses the selected **Ledger** direction: a calm three-pane library with inventory groups, a searchable skill list, and focused provenance details.
 
 ## Current capabilities
 
