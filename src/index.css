@@ -56,9 +56,6 @@
   --display-font-family: var(--ui-font-family);
 }
 
-:root[data-font-size="small"] { font-size: 9px; }
-:root[data-font-size="large"] { font-size: 11px; }
-
 :root[data-theme="dark"] {
   color: #eeeee9;
   background: #1b1d19;

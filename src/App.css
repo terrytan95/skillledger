@@ -594,6 +594,139 @@ main { min-height: 0; overflow: hidden; }
   color: var(--ink);
   font-size: 1rem;
 }
+.font-size-row {
+  padding: 18px 20px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+}
+.font-size-row-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.font-size-row-heading > div { display: grid; gap: 4px; }
+.font-size-row-heading strong { font-size: 11px; }
+.font-size-row-heading span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.font-size-row-heading output {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+.font-size-control {
+  position: relative;
+  margin-top: 14px;
+  padding-top: 20px;
+}
+.font-size-control input {
+  width: 90%;
+  height: 28px;
+  display: block;
+  margin: 0 5%;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  cursor: grab;
+}
+.font-size-control input:active { cursor: grabbing; }
+.font-size-control input::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(to right, var(--accent) 0 var(--font-size-fill), var(--line) var(--font-size-fill) 100%);
+}
+.font-size-control input::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  margin-top: -8px;
+  appearance: none;
+  border: 2px solid var(--surface-raised);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px var(--panel-shadow);
+  transition: box-shadow .14s ease, height .14s ease, margin .14s ease, width .14s ease;
+}
+.font-size-control input:hover::-webkit-slider-thumb,
+.font-size-control input:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 4px var(--panel-shadow);
+}
+.font-size-control input:focus-visible { outline: 0; }
+.font-size-control.dragging input::-webkit-slider-thumb {
+  width: 20px;
+  height: 20px;
+  margin-top: -9px;
+}
+.font-size-bubble {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  padding: 3px 6px;
+  transform: translate(-50%, -25%);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+}
+.font-size-control.dragging .font-size-bubble { opacity: 1; }
+.font-size-ticks {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.font-size-ticks span {
+  position: relative;
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+.font-size-ticks span::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 5px;
+  background: var(--line);
+}
+.font-size-ticks span.selected { color: var(--accent); font-weight: 800; }
+.font-size-ticks span.selected::before { background: var(--accent); }
+.font-size-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+.font-size-preview-card {
+  min-width: 0;
+  min-height: 86px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+.font-size-preview-card.active { border-color: var(--accent); background: var(--accent-soft); }
+.font-size-preview-card > span {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.font-size-preview-copy {
+  margin-top: 9px;
+  font-size: var(--preview-font-size);
+  line-height: 1.3;
+}
+.font-size-preview-copy p { margin: 0; font-size: 1em; font-weight: 700; }
+.font-size-preview-copy small { display: block; margin-top: 4px; color: var(--muted); font-size: .72em; line-height: 1.4; }
 .segmented-control { display: flex; padding: 3px; border: 1px solid var(--line); background: var(--code-bg); }
 .segmented-control button {
   min-height: 29px;
@@ -732,6 +865,10 @@ main { min-height: 0; overflow: hidden; }
   .activity-size, .row-actions { grid-column: 2; justify-content: start; }
   .settings-layout { width: min(680px, calc(100% - 32px)); grid-template-columns: 1fr; gap: 24px; padding-top: 28px; }
   .settings-intro { position: static; }
+}
+
+@media (max-width: 520px) {
+  .font-size-preview { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -61,7 +61,8 @@ type ContentMode = 'rendered' | 'source'
 type WorkbenchTab = 'overview' | 'content' | 'files'
 type ThemeMode = 'system' | 'light' | 'dark'
 type FontFamily = 'system' | 'sans' | 'serif' | 'mono'
-type FontSize = 'small' | 'medium' | 'large'
+const fontSizes = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18] as const
+type FontSize = typeof fontSizes[number]
 type Accent =
   | 'forest'
   | 'ocean'
@@ -110,13 +111,12 @@ const accents: Accent[] = [
 ]
 const languages: LanguagePreference[] = ['system', 'en', 'zh-CN']
 const fontFamilies: FontFamily[] = ['system', 'sans', 'serif', 'mono']
-const fontSizes: FontSize[] = ['small', 'medium', 'large']
 const defaultPreferences: Preferences = {
   theme: 'system',
   accent: 'forest',
   language: 'system',
   fontFamily: 'system',
-  fontSize: 'medium',
+  fontSize: 10,
   automaticUpdates: true,
 }
 
@@ -131,13 +131,15 @@ function readLedgerSplitRatio(): number {
 
 function readPreferences(): Preferences {
   try {
-    const stored = JSON.parse(localStorage.getItem(preferenceKey) ?? '{}') as Partial<Preferences>
+    const stored = JSON.parse(localStorage.getItem(preferenceKey) ?? '{}') as Partial<Preferences> & { fontSize?: unknown }
+    const legacyFontSize = { small: 9, medium: 10, large: 11 }[String(stored.fontSize) as 'small' | 'medium' | 'large']
+    const fontSize = typeof stored.fontSize === 'number' ? stored.fontSize : legacyFontSize
     return {
       theme: themeModes.includes(stored.theme as ThemeMode) ? stored.theme as ThemeMode : defaultPreferences.theme,
       accent: accents.includes(stored.accent as Accent) ? stored.accent as Accent : defaultPreferences.accent,
       language: languages.includes(stored.language as LanguagePreference) ? stored.language as LanguagePreference : defaultPreferences.language,
       fontFamily: fontFamilies.includes(stored.fontFamily as FontFamily) ? stored.fontFamily as FontFamily : defaultPreferences.fontFamily,
-      fontSize: fontSizes.includes(stored.fontSize as FontSize) ? stored.fontSize as FontSize : defaultPreferences.fontSize,
+      fontSize: fontSizes.includes(fontSize as FontSize) ? fontSize as FontSize : defaultPreferences.fontSize,
       automaticUpdates: typeof stored.automaticUpdates === 'boolean' ? stored.automaticUpdates : defaultPreferences.automaticUpdates,
     }
   } catch {
@@ -944,6 +946,11 @@ function SettingsView({
 }) {
   const updatePhase = updateStatus?.phase ?? 'idle'
   const downloadLabel = `${copy.downloadingUpdate}${updateStatus?.downloadPercent == null ? '' : ` ${Math.round(updateStatus.downloadPercent)}%`}`
+  const [fontSizeBefore, setFontSizeBefore] = useState<FontSize>(preferences.fontSize)
+  const [fontSizeDragging, setFontSizeDragging] = useState(false)
+  const fontSizeInput = useRef<HTMLInputElement>(null)
+  const fontSizeProgress = (preferences.fontSize - fontSizes[0]) / (fontSizes.at(-1)! - fontSizes[0]) * 100
+  const fontSizeThumbPosition = 5 + (preferences.fontSize - fontSizes[0]) * 10
   const themeOptions = [
     { value: 'system' as const, label: copy.system, Icon: Monitor },
     { value: 'light' as const, label: copy.light, Icon: Sun },
@@ -1059,14 +1066,78 @@ function SettingsView({
               <option value="mono">{copy.fontMono}</option>
             </select>
           </label>
-          <label className="setting-row">
-            <div><strong>{copy.interfaceFontSize}</strong><span>{copy.interfaceFontSizeDescription}</span></div>
-            <select value={preferences.fontSize} onChange={(event) => onPreference('fontSize', event.target.value as FontSize)}>
-              <option value="small">{copy.fontSizeSmall}</option>
-              <option value="medium">{copy.fontSizeMedium}</option>
-              <option value="large">{copy.fontSizeLarge}</option>
-            </select>
-          </label>
+          <div className="font-size-row">
+            <div className="font-size-row-heading">
+              <div>
+                <strong id="font-size-label">{copy.interfaceFontSize}</strong>
+                <span id="font-size-description">{copy.fontSizeDragDescription}</span>
+              </div>
+              <output htmlFor="font-size-range">{copy.fontSizeCurrent} {preferences.fontSize} px</output>
+            </div>
+            <div
+              className={`font-size-control ${fontSizeDragging ? 'dragging' : ''}`}
+              style={{ '--font-size-fill': `${fontSizeProgress}%` } as CSSProperties}
+            >
+              <span className="font-size-bubble" style={{ left: `${fontSizeThumbPosition}%` }}>{preferences.fontSize} px</span>
+              <input
+                id="font-size-range"
+                ref={fontSizeInput}
+                type="range"
+                min={fontSizes[0]}
+                max={fontSizes.at(-1)}
+                step={1}
+                value={preferences.fontSize}
+                aria-labelledby="font-size-label"
+                aria-describedby="font-size-description"
+                aria-valuetext={`${preferences.fontSize} ${copy.fontSizePixels}${preferences.fontSize === 10 ? `, ${copy.fontDefault}` : ''}`}
+                onChange={(event) => onPreference('fontSize', Number(event.target.value) as FontSize)}
+                onPointerDown={() => {
+                  setFontSizeBefore(preferences.fontSize)
+                  setFontSizeDragging(true)
+                }}
+                onPointerUp={() => setFontSizeDragging(false)}
+                onPointerCancel={() => setFontSizeDragging(false)}
+                onBlur={() => setFontSizeDragging(false)}
+                onKeyDown={(event) => {
+                  if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp'].includes(event.key)) {
+                    setFontSizeBefore(preferences.fontSize)
+                  }
+                }}
+              />
+              <div className="font-size-ticks" aria-hidden="true">
+                {fontSizes.map((size) => (
+                  <span
+                    className={preferences.fontSize === size ? 'selected' : ''}
+                    key={size}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      setFontSizeBefore(preferences.fontSize)
+                      onPreference('fontSize', size)
+                      fontSizeInput.current?.focus()
+                    }}
+                  >
+                    {size}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="font-size-preview">
+              <div className="font-size-preview-card" style={{ '--preview-font-size': `${fontSizeBefore}px` } as CSSProperties}>
+                <span>{copy.fontSizeBefore} · {fontSizeBefore} px</span>
+                <div className="font-size-preview-copy">
+                  <p>{copy.fontSizeSampleTitle}</p>
+                  <small>{copy.fontSizeSampleBody}</small>
+                </div>
+              </div>
+              <div className="font-size-preview-card active" style={{ '--preview-font-size': `${preferences.fontSize}px` } as CSSProperties}>
+                <span>{copy.fontSizeLivePreview} · {preferences.fontSize} px</span>
+                <div className="font-size-preview-copy">
+                  <p>{copy.fontSizeSampleTitle}</p>
+                  <small>{copy.fontSizeSampleBody}</small>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="settings-section">
@@ -1267,7 +1338,7 @@ export default function App() {
     localStorage.setItem(preferenceKey, JSON.stringify(preferences))
     root.dataset.accent = preferences.accent
     root.dataset.fontFamily = preferences.fontFamily
-    root.dataset.fontSize = preferences.fontSize
+    root.style.fontSize = `${preferences.fontSize}px`
     root.lang = language
     applyTheme()
     colorScheme.addEventListener('change', applyTheme)
