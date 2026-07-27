@@ -5,6 +5,11 @@
   "asar": true,
   "electronLanguages": ["en", "zh_CN"],
   "forceCodeSigning": true,
+  "publish": {
+    "provider": "github",
+    "owner": "terrytan95",
+    "repo": "skillledger"
+  },
   "directories": { "output": "release/${version}" },
   "files": ["dist", "dist-electron"],
   "mac": {

@@ -1,15 +1,16 @@
 import { app, BrowserWindow, dialog, ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
-import { checkForUpdates } from './app-update'
+import { checkForUpdates as checkLatestRelease } from './app-update'
 import { defaultAgentLocations, readSkillContent, validSkillId } from './skill-inventory'
 import { serializeInventoryExport } from './inventory-export'
 import { SkillReconciler } from './skill-reconciler'
 import { discoverGitHubSourceUpdates } from './skill-source'
 import { TeamManager } from './team-policy'
-import type { ReconcileRequest } from '../src/types'
+import type { AppUpdateStatus, ReconcileRequest } from '../src/types'
 
 const appRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const devServerUrl = process.env['VITE_DEV_SERVER_URL']
@@ -31,9 +32,18 @@ const channels = {
   importManifest: 'skillledger:team:import-manifest',
   appVersion: 'skillledger:get-app-version',
   checkUpdates: 'skillledger:check-for-updates',
+  updateState: 'skillledger:update-state',
+  installUpdate: 'skillledger:install-update',
   openUpdatesPage: 'skillledger:open-updates-page',
 } as const
 const updatesPage = 'https://github.com/terrytan95/skillledger/releases/latest'
+let updateStatus: AppUpdateStatus = {
+  currentVersion: app.getVersion(),
+  latestVersion: app.getVersion(),
+  available: false,
+  phase: 'idle',
+  downloadPercent: null,
+}
 const homeDir = os.homedir()
 const teamManager = new TeamManager(homeDir)
 const reconciler = new SkillReconciler({
@@ -42,6 +52,73 @@ const reconciler = new SkillReconciler({
   fetchSource: net.fetch,
   teamManager,
 })
+
+function publishUpdateStatus(status: AppUpdateStatus): void {
+  updateStatus = status
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(channels.updateState, status)
+  }
+}
+
+function configureUpdater(): void {
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.allowPrerelease = false
+  autoUpdater.logger = console
+  autoUpdater.on('checking-for-update', () => {
+    publishUpdateStatus({ ...updateStatus, phase: 'checking', downloadPercent: null })
+  })
+  autoUpdater.on('update-available', (info) => {
+    publishUpdateStatus({
+      currentVersion: app.getVersion(),
+      latestVersion: info.version,
+      available: true,
+      phase: 'downloading',
+      downloadPercent: 0,
+    })
+  })
+  autoUpdater.on('download-progress', (progress) => {
+    publishUpdateStatus({ ...updateStatus, phase: 'downloading', downloadPercent: progress.percent })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    publishUpdateStatus({
+      currentVersion: app.getVersion(),
+      latestVersion: info.version,
+      available: true,
+      phase: 'downloaded',
+      downloadPercent: 100,
+    })
+  })
+  autoUpdater.on('update-not-available', (info) => {
+    publishUpdateStatus({
+      currentVersion: app.getVersion(),
+      latestVersion: info.version,
+      available: false,
+      phase: 'up-to-date',
+      downloadPercent: null,
+    })
+  })
+  autoUpdater.on('error', (error) => {
+    console.error('SkillLedger update failed.', error)
+    publishUpdateStatus({ ...updateStatus, phase: 'error', downloadPercent: null })
+  })
+}
+
+async function checkAppUpdates(): Promise<AppUpdateStatus> {
+  publishUpdateStatus({ ...updateStatus, phase: 'checking', downloadPercent: null })
+  const info = await checkLatestRelease(app.getVersion(), net.fetch)
+  if (!info.available || !app.isPackaged) {
+    publishUpdateStatus({
+      ...info,
+      phase: info.available ? 'available' : 'up-to-date',
+      downloadPercent: null,
+    })
+    return updateStatus
+  }
+
+  await autoUpdater.checkForUpdates()
+  return updateStatus
+}
 
 function isTrustedSender(rawUrl: string): boolean {
   try {
@@ -134,7 +211,12 @@ function registerIpc(): void {
   })
   ipcMain.handle(channels.checkUpdates, async (event) => {
     assertTrustedSender(event)
-    return checkForUpdates(app.getVersion(), net.fetch)
+    return checkAppUpdates()
+  })
+  ipcMain.handle(channels.installUpdate, (event) => {
+    assertTrustedSender(event)
+    if (updateStatus.phase !== 'downloaded') throw new Error('No downloaded update is ready to install')
+    setImmediate(() => autoUpdater.quitAndInstall())
   })
   ipcMain.handle(channels.openUpdatesPage, async (event) => {
     assertTrustedSender(event)
@@ -275,6 +357,7 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       console.error('SkillLedger could not inspect recovery journals.', error)
     }
+    configureUpdater()
     registerIpc()
     createWindow()
   })
