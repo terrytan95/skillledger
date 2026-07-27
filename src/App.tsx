@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -89,6 +89,8 @@ interface Preferences {
 }
 
 const preferenceKey = 'skillledger:preferences'
+const ledgerSplitKey = 'skillledger:ledger-split'
+const defaultLedgerSplit = 0.35
 const themeModes: ThemeMode[] = ['system', 'light', 'dark']
 const accents: Accent[] = [
   'forest',
@@ -115,6 +117,15 @@ const defaultPreferences: Preferences = {
   fontFamily: 'system',
   fontSize: 'medium',
   automaticUpdates: true,
+}
+
+export function clampSplitRatio(value: number, minimum = 0.25, maximum = 0.65): number {
+  return Math.min(maximum, Math.max(minimum, value))
+}
+
+function readLedgerSplitRatio(): number {
+  const stored = Number.parseFloat(localStorage.getItem(ledgerSplitKey) ?? '')
+  return Number.isFinite(stored) ? clampSplitRatio(stored) : defaultLedgerSplit
 }
 
 function readPreferences(): Preferences {
@@ -348,10 +359,41 @@ function LedgerView({
   onOpenReader: () => void
 }) {
   const [tab, setTab] = useState<WorkbenchTab>('content')
+  const [splitRatio, setSplitRatio] = useState(readLedgerSplitRatio)
+  const layout = useRef<HTMLDivElement>(null)
   useEffect(() => { setTab('content') }, [selected?.id])
+  useEffect(() => { localStorage.setItem(ledgerSplitKey, String(splitRatio)) }, [splitRatio])
+
+  const splitGeometry = () => {
+    const container = layout.current
+    const rail = container?.querySelector<HTMLElement>('.library-rail')
+    const separator = container?.querySelector<HTMLElement>('.ledger-separator')
+    if (!container || !rail || !separator) return null
+
+    const bounds = container.getBoundingClientRect()
+    const minimum = Math.max(0.25, 250 / bounds.width)
+    const maximum = Math.max(
+      minimum,
+      Math.min(0.65, (bounds.width - rail.offsetWidth - separator.offsetWidth - 360) / bounds.width),
+    )
+    return { bounds, minimum, maximum, railWidth: rail.offsetWidth, separatorWidth: separator.offsetWidth }
+  }
+
+  const resize = (clientX: number) => {
+    const geometry = splitGeometry()
+    if (!geometry) return
+    const next = (
+      clientX - geometry.bounds.left - geometry.railWidth - geometry.separatorWidth / 2
+    ) / geometry.bounds.width
+    setSplitRatio(clampSplitRatio(next, geometry.minimum, geometry.maximum))
+  }
 
   return (
-    <div className="ledger-layout">
+    <div
+      className="ledger-layout"
+      ref={layout}
+      style={{ '--skill-list-width': `${splitRatio * 100}%` } as CSSProperties}
+    >
       <aside className="library-rail">
         <nav aria-label={copy.inventoryGroups}>
           <button title={copy.allSkills} aria-label={copy.allSkills} className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}><Boxes size={17} /></button>
@@ -381,6 +423,36 @@ function LedgerView({
           ))}
         </div>
       </section>
+      <div
+        className="ledger-separator"
+        role="separator"
+        aria-label={copy.resizePanels}
+        aria-orientation="vertical"
+        aria-valuemin={25}
+        aria-valuemax={65}
+        aria-valuenow={Math.round(splitRatio * 100)}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          resize(event.clientX)
+        }}
+        onPointerMove={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientX)
+        }}
+        onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          const geometry = splitGeometry()
+          setSplitRatio((current) => clampSplitRatio(
+            current + (event.key === 'ArrowRight' ? 0.02 : -0.02),
+            geometry?.minimum,
+            geometry?.maximum,
+          ))
+        }}
+      />
       <section className="workbench-detail" aria-label={copy.selectedSkillDetails}>
         {!selected ? <div className="empty-inspector">{copy.noSkillMatches}</div> : (
           <>
@@ -1392,27 +1464,8 @@ export default function App() {
       </main>
 
       {!readerOpen && <footer className="app-footer">
-        {updateStatus?.phase === 'downloaded' ? (
-          <span className="footer-update">
-            <Download size={11} aria-hidden="true" />
-            {copy.readyToInstall}: {updateStatus.latestVersion}
-            <button onClick={() => void window.skillLedger?.installUpdate()}>{copy.installUpdate}</button>
-          </span>
-        ) : updateStatus?.phase === 'downloading' ? (
-          <span className="footer-update">
-            <Download size={11} aria-hidden="true" />
-            {copy.downloadingUpdate} {Math.round(updateStatus.downloadPercent ?? 0)}%
-          </span>
-        ) : updateStatus?.phase === 'available' ? (
-          <span className="footer-update">
-            <Download size={11} aria-hidden="true" />
-            {copy.updateAvailable}: {updateStatus.latestVersion}
-            <button onClick={() => void window.skillLedger?.openUpdatesPage()}>{copy.viewUpdate}<ExternalLink size={10} aria-hidden="true" /></button>
-          </span>
-        ) : (
-          <span><span className="footer-dot" />{copy.scanned} {new Date(snapshot.scannedAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</span>
-        )}
-        <span>
+        <span><span className="footer-dot" />{copy.scanned} {new Date(snapshot.scannedAt).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="footer-context">
           {snapshot.warnings.length
             ? `${snapshot.warnings.length} ${copy.scanWarnings}`
             : view === 'activity'
@@ -1421,6 +1474,26 @@ export default function App() {
                 ? copy.localPolicyEnforcement
                 : copy.readOnlyMode}
         </span>
+        {updateStatus?.phase === 'downloaded' ? (
+          <span className="footer-update">
+            <Download size={11} aria-hidden="true" />
+            v{updateStatus.latestVersion} {copy.readyToInstall}
+            <button onClick={() => void window.skillLedger?.installUpdate()}>{copy.installUpdate}</button>
+          </span>
+        ) : updateStatus?.phase === 'downloading' ? (
+          <span className="footer-update">
+            <RefreshCw size={11} className="spin" aria-hidden="true" />
+            {copy.downloadingUpdate} {Math.round(updateStatus.downloadPercent ?? 0)}%
+          </span>
+        ) : updateStatus?.phase === 'available' ? (
+          <span className="footer-update">
+            <Download size={11} aria-hidden="true" />
+            v{updateStatus.latestVersion} {copy.updateAvailable}
+            <button onClick={() => void window.skillLedger?.openUpdatesPage()}>{copy.viewUpdate}<ExternalLink size={10} aria-hidden="true" /></button>
+          </span>
+        ) : (
+          <span className="footer-version">SkillLedger v{appVersion}</span>
+        )}
       </footer>}
       {planOpen && (
         <PlanPanel
