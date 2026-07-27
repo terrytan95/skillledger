@@ -60,6 +60,8 @@ type View = 'inventory' | 'activity' | 'team' | 'settings'
 type ContentMode = 'rendered' | 'source'
 type WorkbenchTab = 'overview' | 'content' | 'files'
 type ThemeMode = 'system' | 'light' | 'dark'
+type FontFamily = 'system' | 'sans' | 'serif' | 'mono'
+type FontSize = 'small' | 'medium' | 'large'
 type Accent =
   | 'forest'
   | 'ocean'
@@ -81,6 +83,8 @@ interface Preferences {
   theme: ThemeMode
   accent: Accent
   language: LanguagePreference
+  fontFamily: FontFamily
+  fontSize: FontSize
   automaticUpdates: boolean
 }
 
@@ -102,10 +106,14 @@ const accents: Accent[] = [
   'lake-teal',
 ]
 const languages: LanguagePreference[] = ['system', 'en', 'zh-CN']
+const fontFamilies: FontFamily[] = ['system', 'sans', 'serif', 'mono']
+const fontSizes: FontSize[] = ['small', 'medium', 'large']
 const defaultPreferences: Preferences = {
   theme: 'system',
   accent: 'forest',
   language: 'system',
+  fontFamily: 'system',
+  fontSize: 'medium',
   automaticUpdates: true,
 }
 
@@ -116,6 +124,8 @@ function readPreferences(): Preferences {
       theme: themeModes.includes(stored.theme as ThemeMode) ? stored.theme as ThemeMode : defaultPreferences.theme,
       accent: accents.includes(stored.accent as Accent) ? stored.accent as Accent : defaultPreferences.accent,
       language: languages.includes(stored.language as LanguagePreference) ? stored.language as LanguagePreference : defaultPreferences.language,
+      fontFamily: fontFamilies.includes(stored.fontFamily as FontFamily) ? stored.fontFamily as FontFamily : defaultPreferences.fontFamily,
+      fontSize: fontSizes.includes(stored.fontSize as FontSize) ? stored.fontSize as FontSize : defaultPreferences.fontSize,
       automaticUpdates: typeof stored.automaticUpdates === 'boolean' ? stored.automaticUpdates : defaultPreferences.automaticUpdates,
     }
   } catch {
@@ -960,11 +970,28 @@ function SettingsView({
             <div><h2>{copy.language}</h2><p>{copy.languageDescription}</p></div>
           </div>
           <label className="setting-row">
-            <div><strong>{copy.appLanguage}</strong><span>{copy.languageDescription}</span></div>
+            <div><strong>{copy.appLanguage}</strong><span>{copy.appLanguageDescription}</span></div>
             <select value={preferences.language} onChange={(event) => onPreference('language', event.target.value as LanguagePreference)}>
               <option value="system">{copy.followSystem}</option>
               <option value="en">{copy.english}</option>
               <option value="zh-CN">{copy.simplifiedChinese}</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <div><strong>{copy.interfaceFont}</strong><span>{copy.interfaceFontDescription}</span></div>
+            <select value={preferences.fontFamily} onChange={(event) => onPreference('fontFamily', event.target.value as FontFamily)}>
+              <option value="system">{copy.fontDefault}</option>
+              <option value="sans">{copy.fontSans}</option>
+              <option value="serif">{copy.fontSerif}</option>
+              <option value="mono">{copy.fontMono}</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <div><strong>{copy.interfaceFontSize}</strong><span>{copy.interfaceFontSizeDescription}</span></div>
+            <select value={preferences.fontSize} onChange={(event) => onPreference('fontSize', event.target.value as FontSize)}>
+              <option value="small">{copy.fontSizeSmall}</option>
+              <option value="medium">{copy.fontSizeMedium}</option>
+              <option value="large">{copy.fontSizeLarge}</option>
             </select>
           </label>
         </section>
@@ -1166,6 +1193,8 @@ export default function App() {
 
     localStorage.setItem(preferenceKey, JSON.stringify(preferences))
     root.dataset.accent = preferences.accent
+    root.dataset.fontFamily = preferences.fontFamily
+    root.dataset.fontSize = preferences.fontSize
     root.lang = language
     applyTheme()
     colorScheme.addEventListener('change', applyTheme)

@@ -1,5 +1,8 @@
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --ui-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --display-font-family: Georgia, "PingFang SC", serif;
+  font-family: var(--ui-font-family);
+  font-size: 10px;
   color: #20221f;
   background: #f3f1eb;
   color-scheme: light;
@@ -38,6 +41,23 @@
   --broken-ink: #973f3c;
   --broken-bg: #f3dfdd;
 }
+
+:root[data-font-family="sans"] {
+  --display-font-family: var(--ui-font-family);
+}
+
+:root[data-font-family="serif"] {
+  --ui-font-family: Georgia, "Songti SC", "STSong", serif;
+  --display-font-family: var(--ui-font-family);
+}
+
+:root[data-font-family="mono"] {
+  --ui-font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "PingFang SC", monospace;
+  --display-font-family: var(--ui-font-family);
+}
+
+:root[data-font-size="small"] { font-size: 9px; }
+:root[data-font-size="large"] { font-size: 11px; }
 
 :root[data-theme="dark"] {
   color: #eeeee9;
