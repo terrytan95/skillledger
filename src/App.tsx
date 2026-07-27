@@ -1590,19 +1590,84 @@ export default function App() {
           <div className="header-actions">
             <span className={`mode-badge ${liveMode ? 'live' : ''}`}>{liveMode ? copy.liveScan : copy.demoData}</span>
             <span className="header-status" aria-live="polite">{inventoryMessage}</span>
-            {!readerOpen && <button className="primary-button" onClick={() => setExternalSkillOpen(true)} disabled={!window.skillLedger || !liveMode}>
-              <Plus size={15} />{copy.addSkill}
-            </button>}
-            {!readerOpen && <button className="secondary-button" onClick={() => void checkSourceUpdates()} disabled={!window.skillLedger || sourceCheckPhase === 'checking'}>
-              <GitBranch size={15} />{sourceCheckPhase === 'checking' ? copy.checkingSources : copy.checkSourceUpdates}
-            </button>}
-            {!readerOpen && <button className="secondary-button" onClick={() => void exportInventory()} disabled={!window.skillLedger || exportPhase === 'working'}>
-              <Download size={15} />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
-            </button>}
-            <button className="secondary-button" onClick={() => setPlanOpen(true)}><Wrench size={15} />{copy.previewPlan}</button>
-            <button className="primary-button" onClick={() => void refresh()} disabled={!window.skillLedger || loading}>
-              <RefreshCw size={15} className={loading ? 'spin' : ''} />{loading ? copy.scanning : copy.scanNow}
-            </button>
+            <details
+              className="inventory-actions"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.removeAttribute('open')
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.currentTarget.removeAttribute('open')
+                  event.currentTarget.querySelector('summary')?.focus()
+                }
+              }}
+            >
+              <summary aria-label={copy.inventoryActions}>
+                <Wrench size={15} aria-hidden="true" />
+                <strong>{copy.inventoryActions}</strong>
+                <ChevronDown size={14} aria-hidden="true" />
+              </summary>
+              <div className="inventory-actions-menu" aria-label={copy.inventoryActions}>
+                {!readerOpen && (
+                  <>
+                    <p>{copy.inventoryActionSkills}</p>
+                    <button
+                      type="button"
+                      disabled={!window.skillLedger || !liveMode}
+                      onClick={(event) => {
+                        event.currentTarget.closest('details')?.removeAttribute('open')
+                        setExternalSkillOpen(true)
+                      }}
+                    >
+                      <Plus size={15} aria-hidden="true" />{copy.addSkill}
+                    </button>
+                    <div className="inventory-action-divider" aria-hidden="true" />
+                  </>
+                )}
+                <p>{copy.inventory}</p>
+                {!readerOpen && <button
+                  type="button"
+                  disabled={!window.skillLedger || sourceCheckPhase === 'checking'}
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    void checkSourceUpdates()
+                  }}
+                >
+                  <GitBranch size={15} aria-hidden="true" />{sourceCheckPhase === 'checking' ? copy.checkingSources : copy.checkSourceUpdates}
+                </button>}
+                {!readerOpen && <button
+                  type="button"
+                  disabled={!window.skillLedger || exportPhase === 'working'}
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    void exportInventory()
+                  }}
+                >
+                  <Download size={15} aria-hidden="true" />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
+                </button>}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    setPlanOpen(true)
+                  }}
+                >
+                  <Wrench size={15} aria-hidden="true" />{copy.previewPlan}
+                </button>
+                <div className="inventory-action-divider" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="inventory-scan-action"
+                  disabled={!window.skillLedger || loading}
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    void refresh()
+                  }}
+                >
+                  <RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />{loading ? copy.scanning : copy.scanNow}
+                </button>
+              </div>
+            </details>
           </div>
         )}
       </header>
