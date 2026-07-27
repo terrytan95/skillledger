@@ -478,6 +478,7 @@ main { min-height: 0; overflow: hidden; }
 }
 .plan-title { display: flex; justify-content: space-between; align-items: start; }
 .plan-title h2 { margin: 4px 0 0; font-family: var(--display-font-family); font-size: 2.4rem; font-weight: 500; }
+.plan-description { max-width: 330px; margin: 12px 0 0; color: var(--copy-secondary); font-size: 0.95rem; line-height: 1.55; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); }
 .plan-scroll { min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
 .plan-summary { display: flex; align-items: baseline; gap: 9px; margin: 26px 0 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
