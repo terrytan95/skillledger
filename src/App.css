@@ -666,7 +666,10 @@ main { min-height: 0; overflow: hidden; }
 .switch-row input:focus-visible + .switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 .update-row .update-status { min-height: 13px; }
 .update-status.status-error { color: var(--broken-ink); }
-.update-status.status-success { color: var(--accent); }
+.update-status.status-available,
+.update-status.status-downloading,
+.update-status.status-downloaded,
+.update-status.status-up-to-date { color: var(--accent); }
 
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

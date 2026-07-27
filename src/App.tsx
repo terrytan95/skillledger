@@ -38,7 +38,7 @@ import {
 } from 'lucide-react'
 import type {
   ActivitySnapshot,
-  AppUpdateInfo,
+  AppUpdateStatus,
   InventorySnapshot,
   ReconciliationPreview,
   SkillContentEntry,
@@ -844,21 +844,23 @@ function SettingsView({
   preferences,
   copy,
   appVersion,
-  updatePhase,
-  updateInfo,
+  updateStatus,
   onPreference,
   onCheckUpdates,
   onOpenUpdates,
+  onInstallUpdate,
 }: {
   preferences: Preferences
   copy: Messages
   appVersion: string
-  updatePhase: UpdatePhase
-  updateInfo: AppUpdateInfo | null
+  updateStatus: AppUpdateStatus | null
   onPreference: <Key extends keyof Preferences>(key: Key, value: Preferences[Key]) => void
   onCheckUpdates: () => void
   onOpenUpdates: () => void
+  onInstallUpdate: () => void
 }) {
+  const updatePhase = updateStatus?.phase ?? 'idle'
+  const downloadLabel = `${copy.downloadingUpdate}${updateStatus?.downloadPercent == null ? '' : ` ${Math.round(updateStatus.downloadPercent)}%`}`
   const themeOptions = [
     { value: 'system' as const, label: copy.system, Icon: Monitor },
     { value: 'light' as const, label: copy.light, Icon: Sun },
@@ -989,11 +991,17 @@ function SettingsView({
                 {window.skillLedger && updatePhase === 'idle' && copy.updatesDescription}
                 {updatePhase === 'checking' && copy.checking}
                 {updatePhase === 'error' && copy.updateFailed}
-                {updatePhase === 'success' && updateInfo?.available && `${copy.updateAvailable}: ${updateInfo.latestVersion}`}
-                {updatePhase === 'success' && updateInfo && !updateInfo.available && `${copy.upToDate} (${updateInfo.latestVersion})`}
+                {updatePhase === 'available' && updateStatus && `${copy.updateAvailable}: ${updateStatus.latestVersion}`}
+                {updatePhase === 'downloading' && downloadLabel}
+                {updatePhase === 'downloaded' && updateStatus && `${copy.readyToInstall}: ${updateStatus.latestVersion}`}
+                {updatePhase === 'up-to-date' && updateStatus && `${copy.upToDate} (${updateStatus.latestVersion})`}
               </span>
             </div>
-            {updateInfo?.available && updatePhase === 'success' ? (
+            {updatePhase === 'downloaded' ? (
+              <button className="primary-button" onClick={onInstallUpdate}><Download size={14} />{copy.installUpdate}</button>
+            ) : updatePhase === 'downloading' ? (
+              <button className="primary-button" disabled><RefreshCw size={14} className="spin" />{downloadLabel}</button>
+            ) : updatePhase === 'available' ? (
               <button className="primary-button" onClick={onOpenUpdates}><ExternalLink size={14} />{copy.viewUpdate}</button>
             ) : (
               <button className="secondary-button" disabled={!window.skillLedger || updatePhase === 'checking'} onClick={onCheckUpdates}>
@@ -1024,8 +1032,7 @@ export default function App() {
   const [contentMode, setContentMode] = useState<ContentMode>('rendered')
   const [preferences, setPreferences] = useState(readPreferences)
   const [appVersion, setAppVersion] = useState('—')
-  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle')
-  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null)
   const [sourceUpdates, setSourceUpdates] = useState<SourceUpdateSnapshot | null>(null)
   const [sourceCheckPhase, setSourceCheckPhase] = useState<UpdatePhase>('idle')
   const [exportPhase, setExportPhase] = useState<'idle' | 'working'>('idle')
@@ -1076,16 +1083,27 @@ export default function App() {
 
   const checkUpdates = useCallback(async () => {
     if (!window.skillLedger) return
-    setUpdatePhase('checking')
+    setUpdateStatus((current) => ({
+      currentVersion: current?.currentVersion ?? appVersion,
+      latestVersion: current?.latestVersion ?? appVersion,
+      available: current?.available ?? false,
+      phase: 'checking',
+      downloadPercent: null,
+    }))
     try {
       const next = await window.skillLedger.checkForUpdates()
       setAppVersion(next.currentVersion)
-      setUpdateInfo(next)
-      setUpdatePhase('success')
+      setUpdateStatus(next)
     } catch {
-      setUpdatePhase('error')
+      setUpdateStatus((current) => ({
+        currentVersion: current?.currentVersion ?? appVersion,
+        latestVersion: current?.latestVersion ?? appVersion,
+        available: current?.available ?? false,
+        phase: 'error',
+        downloadPercent: null,
+      }))
     }
-  }, [])
+  }, [appVersion])
 
   const checkSourceUpdates = async () => {
     if (!window.skillLedger) return
@@ -1131,6 +1149,11 @@ export default function App() {
   useEffect(() => {
     void window.skillLedger?.getAppVersion().then(setAppVersion).catch(() => undefined)
   }, [])
+
+  useEffect(() => window.skillLedger?.onUpdateState((status) => {
+    setAppVersion(status.currentVersion)
+    setUpdateStatus(status)
+  }), [])
 
   useEffect(() => {
     const root = document.documentElement
@@ -1330,20 +1353,31 @@ export default function App() {
             preferences={preferences}
             copy={copy}
             appVersion={appVersion}
-            updatePhase={updatePhase}
-            updateInfo={updateInfo}
+            updateStatus={updateStatus}
             onPreference={setPreference}
             onCheckUpdates={() => void checkUpdates()}
             onOpenUpdates={() => void window.skillLedger?.openUpdatesPage()}
+            onInstallUpdate={() => void window.skillLedger?.installUpdate()}
           />
         )}
       </main>
 
       {!readerOpen && <footer className="app-footer">
-        {updatePhase === 'success' && updateInfo?.available ? (
+        {updateStatus?.phase === 'downloaded' ? (
           <span className="footer-update">
             <Download size={11} aria-hidden="true" />
-            {copy.updateAvailable}: {updateInfo.latestVersion}
+            {copy.readyToInstall}: {updateStatus.latestVersion}
+            <button onClick={() => void window.skillLedger?.installUpdate()}>{copy.installUpdate}</button>
+          </span>
+        ) : updateStatus?.phase === 'downloading' ? (
+          <span className="footer-update">
+            <Download size={11} aria-hidden="true" />
+            {copy.downloadingUpdate} {Math.round(updateStatus.downloadPercent ?? 0)}%
+          </span>
+        ) : updateStatus?.phase === 'available' ? (
+          <span className="footer-update">
+            <Download size={11} aria-hidden="true" />
+            {copy.updateAvailable}: {updateStatus.latestVersion}
             <button onClick={() => void window.skillLedger?.openUpdatesPage()}>{copy.viewUpdate}<ExternalLink size={10} aria-hidden="true" /></button>
           </span>
         ) : (

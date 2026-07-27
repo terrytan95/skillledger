@@ -200,6 +200,11 @@ export interface AppUpdateInfo {
   available: boolean
 }
 
+export interface AppUpdateStatus extends AppUpdateInfo {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error'
+  downloadPercent: number | null
+}
+
 export interface SourceUpdateEntry {
   skillId: string
   repository: string
@@ -232,7 +237,9 @@ export interface SkillLedgerBridge {
   checkSourceUpdates: () => Promise<SourceUpdateSnapshot>
   exportInventory: () => Promise<InventoryExportResult>
   getAppVersion: () => Promise<string>
-  checkForUpdates: () => Promise<AppUpdateInfo>
+  checkForUpdates: () => Promise<AppUpdateStatus>
+  onUpdateState: (listener: (status: AppUpdateStatus) => void) => () => void
+  installUpdate: () => Promise<void>
   openUpdatesPage: () => Promise<void>
   reconcile: {
     preview: (request?: ReconcileRequest) => Promise<ReconciliationPreview>
