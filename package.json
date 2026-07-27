@@ -1,7 +1,7 @@
 {
   "name": "skillledger",
   "private": true,
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "A local-first control plane for global Agent Skills.",
   "author": "Terry Tan",
   "license": "MIT",
