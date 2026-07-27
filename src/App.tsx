@@ -30,11 +30,11 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  SlidersHorizontal,
   Sun,
   Trash2,
   Upload,
   Users,
+  Wrench,
   X,
 } from 'lucide-react'
 import type {
@@ -968,6 +968,7 @@ function PlanPanel({
     'write-lock': copy.updateSourceLock,
   } as const
   const changeCount = preview?.operations.length ?? 0
+  const onlyCreatesLinks = Boolean(changeCount && preview?.operations.every((operation) => operation.kind === 'create-symlink'))
   const copyBlockers = preview?.blockers.filter((blocker) => blocker.code === 'copy-requires-confirmation').length ?? 0
   const sourceBlockers = preview?.blockers.filter((blocker) => (
     blocker.code === 'source-restore-requires-confirmation'
@@ -977,9 +978,9 @@ function PlanPanel({
   return (
     <div className="plan-backdrop" role="presentation" onMouseDown={onClose}>
       <aside className="plan-panel" role="dialog" aria-modal="true" aria-label={copy.reconciliationPlan} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="plan-title"><div><p className="eyebrow">{copy.hashBoundPreview} · {skillId}</p><h2>{copy.reconciliationPlan}</h2></div><button className="icon-button" onClick={onClose} aria-label={copy.closePreview}><X size={18} /></button></div>
+        <div className="plan-title"><div><p className="eyebrow">{copy.hashBoundPreview} · {skillId}</p><h2>{copy.reconciliationPlan}</h2><p className="plan-description">{copy.repairPlanDescription}</p></div><button className="icon-button" onClick={onClose} aria-label={copy.closePreview}><X size={18} /></button></div>
         <div className="plan-scroll">
-          <div className="plan-summary"><strong>{working && !preview ? '—' : changeCount}</strong><span>{preview?.status === 'blocked' ? `${preview.blockers.length} ${preview.blockers.length === 1 ? copy.blocker : copy.blockers} ${copy.blockersMustBeResolved}` : copy.verifiedChangesReady}</span></div>
+          <div className="plan-summary"><strong>{working && !preview ? '—' : changeCount}</strong><span>{preview?.status === 'blocked' ? `${preview.blockers.length} ${preview.blockers.length === 1 ? copy.blocker : copy.blockers} ${copy.blockersMustBeResolved}` : onlyCreatesLinks ? copy.createLinksReady : copy.verifiedChangesReady}</span></div>
           {preview?.operations.length ? (
             <ol className="plan-steps">
               {preview.operations.map((operation, index) => (
@@ -1598,7 +1599,7 @@ export default function App() {
             {!readerOpen && <button className="secondary-button" onClick={() => void exportInventory()} disabled={!window.skillLedger || exportPhase === 'working'}>
               <Download size={15} />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
             </button>}
-            <button className="secondary-button" onClick={() => setPlanOpen(true)}><SlidersHorizontal size={15} />{copy.previewPlan}</button>
+            <button className="secondary-button" onClick={() => setPlanOpen(true)}><Wrench size={15} />{copy.previewPlan}</button>
             <button className="primary-button" onClick={() => void refresh()} disabled={!window.skillLedger || loading}>
               <RefreshCw size={15} className={loading ? 'spin' : ''} />{loading ? copy.scanning : copy.scanNow}
             </button>
