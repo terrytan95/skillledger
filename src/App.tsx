@@ -1643,7 +1643,7 @@ export default function App() {
                     void exportInventory()
                   }}
                 >
-                  <Download size={15} aria-hidden="true" />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
+                  <Upload size={15} aria-hidden="true" />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
                 </button>}
                 <button
                   type="button"
