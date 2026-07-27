@@ -91,6 +91,7 @@ interface Preferences {
 const preferenceKey = 'skillledger:preferences'
 const ledgerSplitKey = 'skillledger:ledger-split'
 const defaultLedgerSplit = 0.35
+export const automaticUpdateIntervalMs = 24 * 60 * 60 * 1000
 const themeModes: ThemeMode[] = ['system', 'light', 'dark']
 const accents: Accent[] = [
   'forest',
@@ -1274,9 +1275,16 @@ export default function App() {
   }, [language, preferences])
 
   useEffect(() => {
-    if (!preferences.automaticUpdates || automaticUpdateChecked.current) return
-    automaticUpdateChecked.current = true
-    void checkUpdates()
+    if (!preferences.automaticUpdates) {
+      automaticUpdateChecked.current = false
+      return
+    }
+    if (!automaticUpdateChecked.current) {
+      automaticUpdateChecked.current = true
+      void checkUpdates()
+    }
+    const interval = window.setInterval(() => void checkUpdates(), automaticUpdateIntervalMs)
+    return () => window.clearInterval(interval)
   }, [checkUpdates, preferences.automaticUpdates])
 
   useEffect(() => {
