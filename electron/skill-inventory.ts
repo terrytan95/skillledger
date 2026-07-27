@@ -1,10 +1,12 @@
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
+import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type {
   AgentInstallKind,
   AgentPresence,
   InventorySnapshot,
+  SkillContentEntry,
+  SkillContentSnapshot,
   SourcePin,
   SkillHealth,
   SkillRecord,
@@ -58,10 +60,87 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function validSkillId(value: string): boolean {
+export function validSkillId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)
     && value !== '.'
     && value !== '..'
+}
+
+const maxContentBytes = 512 * 1024
+const maxContentEntries = 500
+const maxContentDepth = 6
+
+function validRelativePath(value: string): boolean {
+  return value.length > 0
+    && value.length <= 512
+    && !path.isAbsolute(value)
+    && !value.includes('\\')
+    && !value.includes('\0')
+    && value.split('/').every((part) => part && part !== '.' && part !== '..')
+}
+
+function insideRoot(root: string, target: string): boolean {
+  const relative = path.relative(root, target)
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+}
+
+async function listSkillContent(
+  directory: string,
+  prefix = '',
+  depth = 0,
+  entries: SkillContentEntry[] = [],
+): Promise<SkillContentEntry[]> {
+  if (depth > maxContentDepth || entries.length >= maxContentEntries) return entries
+  const children = (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => !entry.name.startsWith('.') && !entry.isSymbolicLink())
+    .sort((left, right) => {
+      if (left.name === 'SKILL.md') return -1
+      if (right.name === 'SKILL.md') return 1
+      const kindOrder = Number(right.isDirectory()) - Number(left.isDirectory())
+      return kindOrder || left.name.localeCompare(right.name)
+    })
+
+  for (const child of children) {
+    if (entries.length >= maxContentEntries) break
+    const relativePath = prefix ? `${prefix}/${child.name}` : child.name
+    if (child.isDirectory()) {
+      entries.push({ path: relativePath, kind: 'directory', depth })
+      await listSkillContent(path.join(directory, child.name), relativePath, depth + 1, entries)
+    } else if (child.isFile()) {
+      entries.push({ path: relativePath, kind: 'file', depth })
+    }
+  }
+  return entries
+}
+
+export async function readSkillContent(
+  homeDir: string,
+  skillId: string,
+  relativePath = 'SKILL.md',
+): Promise<SkillContentSnapshot> {
+  if (!validSkillId(skillId) || !validRelativePath(relativePath)) {
+    throw new Error('Invalid skill content request')
+  }
+
+  const canonicalPath = path.join(homeDir, '.agents', 'skills', skillId)
+  const rootPath = await realpath(canonicalPath)
+  const requestedPath = await realpath(path.join(rootPath, ...relativePath.split('/')))
+  if (!insideRoot(rootPath, requestedPath)) throw new Error('Skill content path escapes its root')
+
+  const metadata = await stat(requestedPath)
+  if (!metadata.isFile()) throw new Error('Skill content path is not a file')
+  if (metadata.size > maxContentBytes) throw new Error('Skill content file exceeds 512 KiB')
+
+  const bytes = await readFile(requestedPath)
+  if (bytes.includes(0)) throw new Error('Binary skill content cannot be displayed')
+
+  return {
+    skillId,
+    rootPath,
+    selectedPath: relativePath,
+    content: bytes.toString('utf8'),
+    files: await listSkillContent(rootPath),
+  }
 }
 
 async function loadLock(lockFilePath: string, warnings: string[]): Promise<Record<string, LockEntry>> {

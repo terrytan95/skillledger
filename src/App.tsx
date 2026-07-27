@@ -2,15 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
+  BookOpen,
   Boxes,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  Code2,
   Command,
   Download,
+  Eye,
   ExternalLink,
   FileCheck2,
+  FileText,
+  Folder,
+  FolderOpen,
   GitBranch,
   HardDrive,
   Languages,
@@ -33,6 +41,8 @@ import type {
   AppUpdateInfo,
   InventorySnapshot,
   ReconciliationPreview,
+  SkillContentEntry,
+  SkillContentSnapshot,
   SkillHealth,
   SkillRecord,
   SourceUpdateEntry,
@@ -40,12 +50,15 @@ import type {
   TeamStatus,
 } from './types'
 import { localizeHealthReason, messages, type Language, type Messages } from './i18n'
-import { demoSnapshot } from './demo'
+import { demoSkillContent, demoSnapshot } from './demo'
+import { MarkdownDocument, markdownHeadings } from './markdown'
 import appIcon from '../build/icon.svg'
 import './App.css'
 
 type HealthFilter = SkillHealth | 'all' | 'needs-review'
 type View = 'inventory' | 'activity' | 'team' | 'settings'
+type ContentMode = 'rendered' | 'source'
+type WorkbenchTab = 'overview' | 'content' | 'files'
 type ThemeMode = 'system' | 'light' | 'dark'
 type Accent =
   | 'forest'
@@ -136,18 +149,17 @@ function AgentPills({ skill, copy, limit = 5 }: { skill: SkillRecord; copy: Mess
   )
 }
 
-function SkillInspector({
+function SkillOverview({
   skill,
   copy,
   language,
   sourceUpdate,
 }: {
-  skill: SkillRecord | undefined
+  skill: SkillRecord
   copy: Messages
   language: Language
   sourceUpdate?: SourceUpdateEntry
 }) {
-  if (!skill) return <div className="empty-inspector">{copy.noSkillMatches}</div>
   const sourceState = {
     local: copy.sourceLocal,
     pinned: copy.sourcePinned,
@@ -155,15 +167,7 @@ function SkillInspector({
     missing: copy.sourceMissing,
   }[skill.sourceState]
   return (
-    <aside className="skill-inspector" aria-label={copy.selectedSkillDetails}>
-      <div className="inspector-heading">
-        <div className="skill-monogram" aria-hidden="true">{skill.name.slice(0, 2).toUpperCase()}</div>
-        <div>
-          <p className="eyebrow">{copy.skillDetail}</p>
-          <h2>{skill.name}</h2>
-        </div>
-      </div>
-      <StatusChip health={skill.health} copy={copy} />
+    <section className="skill-overview" aria-label={copy.selectedSkillDetails}>
       <p className="inspector-description">{skill.description}</p>
       <dl className="fact-list">
         <div><dt>{copy.source}</dt><dd>{skill.source ?? copy.localOnly}</dd></div>
@@ -195,7 +199,106 @@ function SkillInspector({
         <span className="section-label">{copy.canonicalPath}</span>
         <code>{skill.canonicalPath}</code>
       </div>
-    </aside>
+    </section>
+  )
+}
+
+function SkillFileTree({
+  entries,
+  selectedPath,
+  onSelect,
+  copy,
+}: {
+  entries: SkillContentEntry[]
+  selectedPath?: string
+  onSelect: (path: string) => void
+  copy: Messages
+}) {
+  return (
+    <nav className="skill-file-tree" aria-label={copy.skillFiles}>
+      <p className="section-label">{copy.files}</p>
+      {entries.map((entry) => {
+        const label = entry.path.split('/').at(-1) ?? entry.path
+        const style = { paddingLeft: `${12 + entry.depth * 14}px` }
+        if (entry.kind === 'directory') {
+          return (
+            <div className="file-tree-row directory" key={entry.path} style={style}>
+              <Folder size={14} aria-hidden="true" />
+              <span>{label}/</span>
+              <ChevronRight size={13} aria-hidden="true" />
+            </div>
+          )
+        }
+        return (
+          <button
+            className={`file-tree-row ${selectedPath === entry.path ? 'selected' : ''}`}
+            key={entry.path}
+            style={style}
+            onClick={() => onSelect(entry.path)}
+          >
+            <FileText size={14} aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+function ContentModeControl({
+  mode,
+  onMode,
+  copy,
+  sourceOnly,
+}: {
+  mode: ContentMode
+  onMode: (mode: ContentMode) => void
+  copy: Messages
+  sourceOnly: boolean
+}) {
+  return (
+    <div className="content-mode-control" role="group" aria-label={copy.content}>
+      <button className={!sourceOnly && mode === 'rendered' ? 'active' : ''} disabled={sourceOnly} onClick={() => onMode('rendered')}>
+        <Eye size={13} aria-hidden="true" />{copy.rendered}
+      </button>
+      <button className={sourceOnly || mode === 'source' ? 'active' : ''} onClick={() => onMode('source')}>
+        <Code2 size={13} aria-hidden="true" />{copy.source}
+      </button>
+    </div>
+  )
+}
+
+function SkillDocument({
+  content,
+  loading,
+  error,
+  mode,
+  onMode,
+  copy,
+}: {
+  content: SkillContentSnapshot | null
+  loading: boolean
+  error: string
+  mode: ContentMode
+  onMode: (mode: ContentMode) => void
+  copy: Messages
+}) {
+  if (loading) return <div className="content-state">{copy.loadingSkillContent}</div>
+  if (error) return <div className="content-state error">{copy.skillContentLoadFailed}: {error}</div>
+  if (!content) return <div className="content-state">{copy.noReadableContent}</div>
+  const sourceOnly = !content.selectedPath.toLowerCase().endsWith('.md')
+  return (
+    <section className="skill-document">
+      <div className="document-tools">
+        <span><FileText size={13} aria-hidden="true" />{content.selectedPath}</span>
+        <ContentModeControl mode={mode} onMode={onMode} copy={copy} sourceOnly={sourceOnly} />
+      </div>
+      <div className="document-scroll">
+        {sourceOnly || mode === 'source'
+          ? <pre className="source-document"><code>{content.content}</code></pre>
+          : <MarkdownDocument source={content.content} />}
+      </div>
+    </section>
   )
 }
 
@@ -203,39 +306,48 @@ function LedgerView({
   skills,
   selected,
   onSelect,
-  snapshot,
   scanError,
   sourceUpdates,
   health,
   onHealth,
   copy,
   language,
+  content,
+  contentLoading,
+  contentError,
+  contentMode,
+  onContentMode,
+  onSelectFile,
+  onOpenReader,
 }: {
   skills: SkillRecord[]
   selected: SkillRecord | undefined
   onSelect: (id: string) => void
-  snapshot: InventorySnapshot
   scanError: string
   sourceUpdates: Map<string, SourceUpdateEntry>
   health: HealthFilter
   onHealth: (health: HealthFilter) => void
   copy: Messages
   language: Language
+  content: SkillContentSnapshot | null
+  contentLoading: boolean
+  contentError: string
+  contentMode: ContentMode
+  onContentMode: (mode: ContentMode) => void
+  onSelectFile: (path: string) => void
+  onOpenReader: () => void
 }) {
+  const [tab, setTab] = useState<WorkbenchTab>('content')
+  useEffect(() => { setTab('content') }, [selected?.id])
+
   return (
     <div className="ledger-layout">
       <aside className="library-rail">
-        <p className="eyebrow">{copy.library}</p>
-        <h2>{copy.globalSkills}</h2>
         <nav aria-label={copy.inventoryGroups}>
-          <button className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}><Boxes size={16} />{copy.allSkills} <span>{snapshot.summary.total}</span></button>
-          <button className={`rail-item ${health === 'healthy' ? 'active' : ''}`} aria-current={health === 'healthy' ? 'page' : undefined} onClick={() => onHealth('healthy')}><ShieldCheck size={16} />{copy.healthy} <span>{snapshot.summary.healthy}</span></button>
-          <button className={`rail-item ${health === 'needs-review' ? 'active' : ''}`} aria-current={health === 'needs-review' ? 'page' : undefined} onClick={() => onHealth('needs-review')}><AlertTriangle size={16} />{copy.needsReview} <span>{snapshot.summary.review + snapshot.summary.missing + snapshot.summary.broken}</span></button>
+          <button title={copy.allSkills} aria-label={copy.allSkills} className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}><Boxes size={17} /></button>
+          <button title={copy.healthy} aria-label={copy.healthy} className={`rail-item ${health === 'healthy' ? 'active' : ''}`} aria-current={health === 'healthy' ? 'page' : undefined} onClick={() => onHealth('healthy')}><ShieldCheck size={17} /></button>
+          <button title={copy.needsReview} aria-label={copy.needsReview} className={`rail-item ${health === 'needs-review' ? 'active' : ''}`} aria-current={health === 'needs-review' ? 'page' : undefined} onClick={() => onHealth('needs-review')}><AlertTriangle size={17} /></button>
         </nav>
-        <div className="rail-source">
-          <span className="section-label">{copy.sourceOfTruth}</span>
-          <code>{snapshot.canonicalRoot}</code>
-        </div>
       </aside>
       <section className="skill-list" aria-label={copy.skillInventory}>
         <div className="panel-title">
@@ -259,8 +371,131 @@ function LedgerView({
           ))}
         </div>
       </section>
-      <SkillInspector skill={selected} copy={copy} language={language} sourceUpdate={selected ? sourceUpdates.get(selected.id) : undefined} />
+      <section className="workbench-detail" aria-label={copy.selectedSkillDetails}>
+        {!selected ? <div className="empty-inspector">{copy.noSkillMatches}</div> : (
+          <>
+            <header className="workbench-heading">
+              <div className="skill-monogram" aria-hidden="true">{selected.name.slice(0, 2).toUpperCase()}</div>
+              <div className="workbench-title">
+                <div><h2>{selected.name}</h2><StatusChip health={selected.health} copy={copy} /></div>
+                <span>{copy.source} <strong>{selected.source ?? copy.localOnly}</strong></span>
+              </div>
+              <button className="secondary-button open-reader-button" onClick={onOpenReader}>
+                <BookOpen size={14} aria-hidden="true" />{copy.openReader}
+              </button>
+            </header>
+            <nav className="workbench-tabs" aria-label={copy.skillDetail}>
+              {(['overview', 'content', 'files'] as WorkbenchTab[]).map((item) => (
+                <button className={tab === item ? 'active' : ''} key={item} onClick={() => setTab(item)}>
+                  {copy[item]}
+                </button>
+              ))}
+            </nav>
+            <div className="workbench-panel">
+              {tab === 'overview' && (
+                <SkillOverview
+                  skill={selected}
+                  copy={copy}
+                  language={language}
+                  sourceUpdate={sourceUpdates.get(selected.id)}
+                />
+              )}
+              {tab === 'content' && (
+                <div className="skill-content-layout">
+                  <SkillFileTree entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
+                  <SkillDocument content={content} loading={contentLoading} error={contentError} mode={contentMode} onMode={onContentMode} copy={copy} />
+                </div>
+              )}
+              {tab === 'files' && (
+                <div className="files-panel">
+                  <div className="files-panel-heading">
+                    <p className="eyebrow">{copy.skillFiles}</p>
+                    <span>{content?.files.length ?? 0}</span>
+                  </div>
+                  {(content?.files ?? []).map((entry) => (
+                    entry.kind === 'directory' ? (
+                      <div className="file-list-row directory" key={entry.path}>
+                        <Folder size={14} aria-hidden="true" /><strong>{entry.path}/</strong><span>{copy.directory}</span>
+                      </div>
+                    ) : (
+                      <button className="file-list-row" key={entry.path} onClick={() => { onSelectFile(entry.path); setTab('content') }}>
+                        <FileText size={14} aria-hidden="true" /><strong>{entry.path}</strong><span>{copy.file}</span><ArrowRight size={13} aria-hidden="true" />
+                      </button>
+                    )
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
     </div>
+  )
+}
+
+function ReaderView({
+  skill,
+  content,
+  contentLoading,
+  contentError,
+  contentMode,
+  onContentMode,
+  onSelectFile,
+  onBack,
+  onReveal,
+  canReveal,
+  copy,
+}: {
+  skill: SkillRecord
+  content: SkillContentSnapshot | null
+  contentLoading: boolean
+  contentError: string
+  contentMode: ContentMode
+  onContentMode: (mode: ContentMode) => void
+  onSelectFile: (path: string) => void
+  onBack: () => void
+  onReveal: () => void
+  canReveal: boolean
+  copy: Messages
+}) {
+  const headings = content?.selectedPath.toLowerCase().endsWith('.md')
+    ? markdownHeadings(content.content).filter((heading) => heading.level <= 3)
+    : []
+
+  return (
+    <section className="reader-view" aria-label={copy.openReader}>
+      <header className="reader-toolbar">
+        <button className="reader-back" onClick={onBack} aria-label={copy.backToWorkbench}>
+          <ArrowLeft size={16} aria-hidden="true" /><strong>{skill.name}</strong>
+        </button>
+        <span className="reader-separator">/</span>
+        <span className="reader-path">{content?.selectedPath ?? 'SKILL.md'}</span>
+        <StatusChip health={skill.health} copy={copy} />
+        <button className="reader-reveal" onClick={onReveal} disabled={!canReveal}>
+          <FolderOpen size={15} aria-hidden="true" />{copy.revealInFinder}
+        </button>
+      </header>
+      <div className="reader-layout">
+        <aside className="reader-files">
+          <SkillFileTree entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
+        </aside>
+        <section className="reader-document">
+          <SkillDocument content={content} loading={contentLoading} error={contentError} mode={contentMode} onMode={onContentMode} copy={copy} />
+        </section>
+        <aside className="reader-outline">
+          <p className="section-label">{copy.onThisPage}</p>
+          {headings.map((heading) => (
+            <button
+              className={`outline-level-${heading.level}`}
+              key={heading.id}
+              onClick={() => document.getElementById(heading.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              {heading.text}
+            </button>
+          ))}
+        </aside>
+      </div>
+    </section>
   )
 }
 
@@ -782,6 +1017,11 @@ export default function App() {
   const [planOpen, setPlanOpen] = useState(false)
   const [liveMode, setLiveMode] = useState(false)
   const [view, setView] = useState<View>('inventory')
+  const [readerOpen, setReaderOpen] = useState(false)
+  const [skillContent, setSkillContent] = useState<SkillContentSnapshot | null>(null)
+  const [skillContentLoading, setSkillContentLoading] = useState(false)
+  const [skillContentError, setSkillContentError] = useState('')
+  const [contentMode, setContentMode] = useState<ContentMode>('rendered')
   const [preferences, setPreferences] = useState(readPreferences)
   const [appVersion, setAppVersion] = useState('—')
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle')
@@ -791,6 +1031,7 @@ export default function App() {
   const [exportPhase, setExportPhase] = useState<'idle' | 'working'>('idle')
   const [inventoryMessage, setInventoryMessage] = useState('')
   const automaticUpdateChecked = useRef(false)
+  const contentRequest = useRef(0)
   const searchInput = useRef<HTMLInputElement>(null)
   const language = resolveLanguage(preferences.language)
   const copy = messages[language]
@@ -811,6 +1052,25 @@ export default function App() {
       setScanError((error as Error).message)
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const loadSkillContent = useCallback(async (skill: SkillRecord, relativePath = 'SKILL.md') => {
+    const request = ++contentRequest.current
+    setSkillContentLoading(true)
+    setSkillContentError('')
+    try {
+      const next = window.skillLedger
+        ? await window.skillLedger.readSkillContent(skill.id, relativePath)
+        : demoSkillContent(skill, relativePath)
+      if (request === contentRequest.current) setSkillContent(next)
+    } catch (error) {
+      if (request === contentRequest.current) {
+        setSkillContent(null)
+        setSkillContentError((error as Error).message)
+      }
+    } finally {
+      if (request === contentRequest.current) setSkillContentLoading(false)
     }
   }, [])
 
@@ -899,6 +1159,7 @@ export default function App() {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
       event.preventDefault()
+      setReaderOpen(false)
       setView('inventory')
       requestAnimationFrame(() => {
         searchInput.current?.focus()
@@ -908,6 +1169,15 @@ export default function App() {
     window.addEventListener('keydown', focusSearch)
     return () => window.removeEventListener('keydown', focusSearch)
   }, [])
+
+  useEffect(() => {
+    if (!readerOpen) return
+    const closeReader = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setReaderOpen(false)
+    }
+    window.addEventListener('keydown', closeReader)
+    return () => window.removeEventListener('keydown', closeReader)
+  }, [readerOpen])
 
   const skills = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -928,29 +1198,58 @@ export default function App() {
     [sourceUpdates],
   )
 
+  useEffect(() => {
+    if (!selected) {
+      setSkillContent(null)
+      setSkillContentError('')
+      setReaderOpen(false)
+      return
+    }
+    setContentMode('rendered')
+    void loadSkillContent(selected)
+  }, [loadSkillContent, selected?.id, snapshot.scannedAt])
+
+  const selectFile = (relativePath: string) => {
+    if (selected) void loadSkillContent(selected, relativePath)
+  }
+
+  const revealSelectedSkill = async () => {
+    if (!selected || !window.skillLedger) return
+    try {
+      await window.skillLedger.revealSkill(selected.id)
+    } catch (error) {
+      setSkillContentError((error as Error).message)
+    }
+  }
+
+  const showView = (next: View) => {
+    setReaderOpen(false)
+    setView(next)
+  }
+
   return (
-    <div className={`app view-${view}`}>
+    <div className={`app view-${view} ${readerOpen ? 'reader-open' : ''}`}>
       <header className="app-header">
         <div className="brand">
           <img className="brand-mark" src={appIcon} alt="" />
           <div><strong>SkillLedger</strong><small>{copy.tagline}</small></div>
         </div>
         <nav className="primary-nav" aria-label={copy.primaryNavigation}>
-          <button className={view === 'inventory' ? 'active' : ''} onClick={() => setView('inventory')}><Boxes size={16} />{copy.inventory}</button>
-          <button className={view === 'activity' ? 'active' : ''} onClick={() => setView('activity')}><Activity size={16} />{copy.activity}</button>
-          <button className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}><Users size={16} />{copy.team}</button>
-          <button className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Settings size={16} />{copy.settings}</button>
+          <button className={view === 'inventory' ? 'active' : ''} onClick={() => showView('inventory')}><Boxes size={16} />{copy.inventory}</button>
+          <button className={view === 'activity' ? 'active' : ''} onClick={() => showView('activity')}><Activity size={16} />{copy.activity}</button>
+          <button className={view === 'team' ? 'active' : ''} onClick={() => showView('team')}><Users size={16} />{copy.team}</button>
+          <button className={view === 'settings' ? 'active' : ''} onClick={() => showView('settings')}><Settings size={16} />{copy.settings}</button>
         </nav>
         {view === 'inventory' && (
           <div className="header-actions">
             <span className={`mode-badge ${liveMode ? 'live' : ''}`}>{liveMode ? copy.liveScan : copy.demoData}</span>
             <span className="header-status" aria-live="polite">{inventoryMessage}</span>
-            <button className="secondary-button" onClick={() => void checkSourceUpdates()} disabled={!window.skillLedger || sourceCheckPhase === 'checking'}>
+            {!readerOpen && <button className="secondary-button" onClick={() => void checkSourceUpdates()} disabled={!window.skillLedger || sourceCheckPhase === 'checking'}>
               <GitBranch size={15} />{sourceCheckPhase === 'checking' ? copy.checkingSources : copy.checkSourceUpdates}
-            </button>
-            <button className="secondary-button" onClick={() => void exportInventory()} disabled={!window.skillLedger || exportPhase === 'working'}>
+            </button>}
+            {!readerOpen && <button className="secondary-button" onClick={() => void exportInventory()} disabled={!window.skillLedger || exportPhase === 'working'}>
               <Download size={15} />{exportPhase === 'working' ? copy.exporting : copy.exportInventory}
-            </button>
+            </button>}
             <button className="secondary-button" onClick={() => setPlanOpen(true)}><SlidersHorizontal size={15} />{copy.previewPlan}</button>
             <button className="primary-button" onClick={() => void refresh()} disabled={!window.skillLedger || loading}>
               <RefreshCw size={15} className={loading ? 'spin' : ''} />{loading ? copy.scanning : copy.scanNow}
@@ -959,7 +1258,7 @@ export default function App() {
         )}
       </header>
 
-      {view !== 'settings' && (
+      {view !== 'settings' && !readerOpen && (
         <div className={`control-bar ${view !== 'inventory' ? 'simple' : ''}`}>
           <div className="control-context">
             {view === 'inventory' ? <Boxes size={16} aria-hidden="true" /> : view === 'activity' ? <Activity size={16} aria-hidden="true" /> : <Users size={16} aria-hidden="true" />}
@@ -989,7 +1288,41 @@ export default function App() {
       )}
 
       <main>
-        {view === 'inventory' && <LedgerView skills={skills} selected={selected} onSelect={setSelectedId} snapshot={snapshot} scanError={scanError} sourceUpdates={sourceUpdatesBySkill} health={health} onHealth={setHealth} copy={copy} language={language} />}
+        {view === 'inventory' && readerOpen && selected && (
+          <ReaderView
+            skill={selected}
+            content={skillContent}
+            contentLoading={skillContentLoading}
+            contentError={skillContentError}
+            contentMode={contentMode}
+            onContentMode={setContentMode}
+            onSelectFile={selectFile}
+            onBack={() => setReaderOpen(false)}
+            onReveal={() => void revealSelectedSkill()}
+            canReveal={Boolean(window.skillLedger)}
+            copy={copy}
+          />
+        )}
+        {view === 'inventory' && !readerOpen && (
+          <LedgerView
+            skills={skills}
+            selected={selected}
+            onSelect={setSelectedId}
+            scanError={scanError}
+            sourceUpdates={sourceUpdatesBySkill}
+            health={health}
+            onHealth={setHealth}
+            copy={copy}
+            language={language}
+            content={skillContent}
+            contentLoading={skillContentLoading}
+            contentError={skillContentError}
+            contentMode={contentMode}
+            onContentMode={setContentMode}
+            onSelectFile={selectFile}
+            onOpenReader={() => setReaderOpen(true)}
+          />
+        )}
         {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} language={language} />}
         {view === 'team' && <TeamView copy={copy} />}
         {view === 'settings' && (
@@ -1006,7 +1339,7 @@ export default function App() {
         )}
       </main>
 
-      <footer className="app-footer">
+      {!readerOpen && <footer className="app-footer">
         {updatePhase === 'success' && updateInfo?.available ? (
           <span className="footer-update">
             <Download size={11} aria-hidden="true" />
@@ -1025,7 +1358,7 @@ export default function App() {
                 ? copy.localPolicyEnforcement
                 : copy.readOnlyMode}
         </span>
-      </footer>
+      </footer>}
       {planOpen && (
         <PlanPanel
           copy={copy}

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { scanGlobalSkills } from './skill-inventory'
+import { readSkillContent, scanGlobalSkills } from './skill-inventory'
 
 const temporaryHomes: string[] = []
 
@@ -41,5 +41,35 @@ describe('scanGlobalSkills', () => {
     })
     expect(snapshot.skills.find((skill) => skill.id === 'review-code')?.agents.map((agent) => agent.kind))
       .toEqual(['canonical', 'symlink'])
+  })
+
+  it('reads bounded text content without following paths outside the skill', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-'))
+    temporaryHomes.push(home)
+    const canonical = path.join(home, '.agents', 'skills', 'review-code')
+    const references = path.join(canonical, 'references')
+    const outside = path.join(home, 'outside.md')
+    await mkdir(references, { recursive: true })
+    await writeFile(path.join(canonical, 'SKILL.md'), '# Review code\n\nRead this safely.\n')
+    await writeFile(path.join(references, 'checks.md'), '# Checks\n')
+    await writeFile(outside, 'private')
+    await symlink(outside, path.join(canonical, 'linked.md'))
+
+    const content = await readSkillContent(home, 'review-code')
+
+    expect(content).toMatchObject({
+      skillId: 'review-code',
+      selectedPath: 'SKILL.md',
+      content: '# Review code\n\nRead this safely.\n',
+    })
+    expect(content.files.map((entry) => entry.path)).toEqual([
+      'SKILL.md',
+      'references',
+      'references/checks.md',
+    ])
+    await expect(readSkillContent(home, 'review-code', '../outside.md'))
+      .rejects.toThrow('Invalid skill content request')
+    await expect(readSkillContent(home, 'review-code', 'linked.md'))
+      .rejects.toThrow('Skill content path escapes its root')
   })
 })

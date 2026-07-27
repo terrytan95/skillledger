@@ -1,4 +1,4 @@
-import type { InventorySnapshot, SkillHealth } from './types'
+import type { InventorySnapshot, SkillContentSnapshot, SkillHealth, SkillRecord } from './types'
 
 const canonicalRoot = '/Users/you/.agents/skills'
 const agents = ['Universal', 'Codex', 'Claude Code', 'Cursor', 'Gemini CLI', 'Grok', 'OpenCode']
@@ -55,4 +55,84 @@ export const demoSnapshot: InventorySnapshot = {
     skill('broken-link-demo', 'A sample skill with a destination that no longer resolves.', 'example/demo-skills', 'broken', 4, 'At least one Agent link is broken or points elsewhere.'),
   ],
   summary: { total: 8, healthy: 4, review: 2, missing: 1, broken: 1, agentLinks: 38 },
+}
+
+const demoSources: Record<string, string> = {
+  'SKILL.md': `---
+name: codex-model-routing-team
+description: Route complex parallel work through bounded, auditable Workers.
+---
+
+# Codex Model Routing Team
+
+Route complex parallel work through bounded, auditable Workers.
+
+## When to use
+
+Use this skill when a request requires multiple independent or semi-independent tracks of work that benefit from parallel execution, domain-specialized execution, or explicit quality gates.
+
+Examples include multi-domain analysis, large codebase exploration, evidence synthesis, or coordinated generation and validation tasks.
+
+## Routing strategy
+
+Use structured routing to select the right Worker for the job, provide clear boundaries and success criteria, and aggregate results with traceability.
+
+### Key principles
+
+- Route by capability and context, not convenience.
+- Keep Workers focused and bounded.
+- Make handoffs explicit and auditable.
+- Fail fast with clear reasons; retry with adjusted scope.
+
+### High-level flow
+
+\`\`\`text
+plan → route → execute[parallel] → aggregate → validate → respond
+\`\`\`
+
+## Guardrails
+
+- Respect scope limits and do not escalate without explicit instruction.
+- Do not fabricate data, results, or sources.
+- Prefer deterministic, reproducible steps over ad-hoc reasoning.
+- Surface assumptions, risks, and open questions clearly.
+- Preserve user intent and privacy at all times.
+`,
+  'references/routing.md': `# Routing reference
+
+Choose the smallest set of independent Workers that covers the requested outcome.
+
+## Selection order
+
+1. Match the domain.
+2. Bound the file or evidence ownership.
+3. State the expected result.
+4. Validate before integration.
+`,
+  'scripts/validate.ts': `export function validateHandoff(result: unknown): boolean {
+  return Boolean(result && typeof result === 'object')
+}
+`,
+}
+
+export function demoSkillContent(
+  skill: SkillRecord,
+  selectedPath = 'SKILL.md',
+): SkillContentSnapshot {
+  const content = demoSources[selectedPath] ?? demoSources['SKILL.md']
+  return {
+    skillId: skill.id,
+    rootPath: skill.canonicalPath,
+    selectedPath: demoSources[selectedPath] ? selectedPath : 'SKILL.md',
+    content: selectedPath === 'SKILL.md'
+      ? content.replace('codex-model-routing-team', skill.id).replace('Codex Model Routing Team', skill.name)
+      : content,
+    files: [
+      { path: 'SKILL.md', kind: 'file', depth: 0 },
+      { path: 'references', kind: 'directory', depth: 0 },
+      { path: 'references/routing.md', kind: 'file', depth: 1 },
+      { path: 'scripts', kind: 'directory', depth: 0 },
+      { path: 'scripts/validate.ts', kind: 'file', depth: 1 },
+    ],
+  }
 }
