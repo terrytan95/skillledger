@@ -435,6 +435,7 @@ main { min-height: 0; overflow: hidden; }
 .reader-files { min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
 .reader-files .skill-file-tree { height: 100%; border: 0; }
 .reader-document { min-width: 0; min-height: 0; overflow: hidden; }
+.reader-document > .skill-document { height: 100%; }
 .reader-document .document-tools { padding: 0 28px; }
 .reader-document .markdown-document { width: min(760px, calc(100% - 72px)); font-size: 1.2rem; line-height: 1.68; }
 .reader-document .markdown-document h1 { font-size: clamp(2.9rem, 3vw, 3.8rem); }
