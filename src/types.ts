@@ -50,6 +50,20 @@ export interface InventorySnapshot {
   warnings: string[]
 }
 
+export interface SkillContentEntry {
+  path: string
+  kind: 'file' | 'directory'
+  depth: number
+}
+
+export interface SkillContentSnapshot {
+  skillId: string
+  rootPath: string
+  selectedPath: string
+  content: string
+  files: SkillContentEntry[]
+}
+
 export interface ReconcileRequest {
   skillIds?: string[]
   agentIds?: string[]
@@ -213,6 +227,8 @@ export type InventoryExportResult =
 
 export interface SkillLedgerBridge {
   scan: () => Promise<InventorySnapshot>
+  readSkillContent: (skillId: string, relativePath?: string) => Promise<SkillContentSnapshot>
+  revealSkill: (skillId: string) => Promise<void>
   checkSourceUpdates: () => Promise<SourceUpdateSnapshot>
   exportInventory: () => Promise<InventoryExportResult>
   getAppVersion: () => Promise<string>

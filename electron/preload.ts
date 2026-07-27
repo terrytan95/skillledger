@@ -9,6 +9,7 @@ import type {
   ReconcileRequest,
   ReconciliationPreview,
   RollbackResult,
+  SkillContentSnapshot,
   SkillLedgerBridge,
   SourceUpdateSnapshot,
   TeamImportResult,
@@ -17,6 +18,14 @@ import type {
 
 const bridge: SkillLedgerBridge = {
   scan: () => ipcRenderer.invoke('skillledger:scan') as Promise<InventorySnapshot>,
+  readSkillContent: (skillId: string, relativePath?: string) => ipcRenderer.invoke(
+    'skillledger:skill:read-content',
+    { skillId, relativePath },
+  ) as Promise<SkillContentSnapshot>,
+  revealSkill: (skillId: string) => ipcRenderer.invoke(
+    'skillledger:skill:reveal',
+    skillId,
+  ) as Promise<void>,
   checkSourceUpdates: () => ipcRenderer.invoke(
     'skillledger:source:check-updates',
   ) as Promise<SourceUpdateSnapshot>,

@@ -24,6 +24,7 @@
   --scrim: rgba(30, 31, 29, .2);
   --panel-shadow: rgba(32, 34, 31, .12);
   --accent: #315f47;
+  --accent-ink: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--surface-raised));
   --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--ink));
   --scrollbar-thumb: color-mix(in srgb, var(--muted) 52%, transparent);
@@ -59,6 +60,7 @@
   --monogram-ink: #20221f;
   --scrim: rgba(0, 0, 0, .46);
   --panel-shadow: rgba(0, 0, 0, .32);
+  --accent-ink: #181a17;
   --healthy-ink: #9bc9aa;
   --healthy-bg: #263b2d;
   --review-ink: #e3bc86;

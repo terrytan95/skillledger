@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 import { checkForUpdates } from './app-update'
-import { defaultAgentLocations } from './skill-inventory'
+import { defaultAgentLocations, readSkillContent, validSkillId } from './skill-inventory'
 import { serializeInventoryExport } from './inventory-export'
 import { SkillReconciler } from './skill-reconciler'
 import { discoverGitHubSourceUpdates } from './skill-source'
@@ -17,6 +17,8 @@ const rendererDist = path.join(appRoot, 'dist')
 const preloadPath = path.join(appRoot, 'dist-electron', 'preload.mjs')
 const channels = {
   scan: 'skillledger:scan',
+  readSkillContent: 'skillledger:skill:read-content',
+  revealSkill: 'skillledger:skill:reveal',
   checkSourceUpdates: 'skillledger:source:check-updates',
   exportInventory: 'skillledger:inventory:export',
   preview: 'skillledger:reconcile:preview',
@@ -63,6 +65,16 @@ function registerIpc(): void {
   ipcMain.handle(channels.scan, async (event) => {
     assertTrustedSender(event)
     return reconciler.scan()
+  })
+  ipcMain.handle(channels.readSkillContent, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    const request = parseSkillContentRequest(value)
+    return readSkillContent(homeDir, request.skillId, request.relativePath)
+  })
+  ipcMain.handle(channels.revealSkill, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    const skillId = parseSkillId(value)
+    shell.showItemInFolder(path.join(homeDir, '.agents', 'skills', skillId, 'SKILL.md'))
   })
   ipcMain.handle(channels.checkSourceUpdates, async (event) => {
     assertTrustedSender(event)
@@ -138,6 +150,24 @@ function parseOpaqueId(value: unknown): string {
     throw new Error('Invalid reconciliation identifier')
   }
   return value
+}
+
+function parseSkillId(value: unknown): string {
+  if (typeof value !== 'string' || !validSkillId(value)) throw new Error('Invalid skill identifier')
+  return value
+}
+
+function parseSkillContentRequest(value: unknown): { skillId: string; relativePath: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid skill content request')
+  }
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).some((key) => !['skillId', 'relativePath'].includes(key))) {
+    throw new Error('Invalid skill content request')
+  }
+  const relativePath = record.relativePath ?? 'SKILL.md'
+  if (typeof relativePath !== 'string') throw new Error('Invalid skill content request')
+  return { skillId: parseSkillId(record.skillId), relativePath }
 }
 
 function parseReconcileRequest(value: unknown): ReconcileRequest {
