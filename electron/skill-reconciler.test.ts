@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { access, chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -460,6 +460,110 @@ describe('SkillReconciler', () => {
     expect(rollback).toMatchObject({
       status: 'rejected',
       error: { code: 'rollback-conflict' },
+    })
+  })
+
+  it('deletes a skill and its lock entry through a rollback-safe journal', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
+    temporaryHomes.push(home)
+    const canonical = path.join(home, '.agents', 'skills', 'review-code')
+    const codexRoot = path.join(home, '.codex', 'skills')
+    const codexTarget = path.join(codexRoot, 'review-code')
+    const lockPath = path.join(home, '.agents', '.skill-lock.json')
+    await mkdir(canonical, { recursive: true })
+    await mkdir(codexRoot, { recursive: true })
+    await writeFile(path.join(canonical, 'SKILL.md'), '---\nname: review-code\n---\n')
+    await symlink(path.relative(codexRoot, canonical), codexTarget)
+    await writeFile(lockPath, JSON.stringify({
+      version: 3,
+      skills: { 'review-code': { source: 'example/skills', sourceType: 'github' } },
+    }))
+    const options = {
+      homeDir: home,
+      agentLocations: [{ id: 'codex', label: 'Codex', relativePath: '.codex/skills' }],
+    }
+    const reconciler = new SkillReconciler(options)
+
+    const deleted = await reconciler.deleteSkill('review-code')
+    if (deleted.status !== 'applied') throw new Error(`Expected apply, received ${deleted.status}`)
+
+    expect(deleted.snapshot.skills).toEqual([])
+    await expect(access(canonical)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(codexTarget)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(lockPath, 'utf8')).skills).toEqual({})
+
+    const rollback = await new SkillReconciler(options).rollback(deleted.journalId)
+
+    expect(rollback.status).toBe('rolled-back')
+    expect(await realpath(codexTarget)).toBe(await realpath(canonical))
+    expect(JSON.parse(await readFile(lockPath, 'utf8')).skills['review-code']).toBeDefined()
+  })
+
+  it('parses and installs an external GitHub skill with an exact source lock', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
+    temporaryHomes.push(home)
+    const codexRoot = path.join(home, '.codex', 'skills')
+    await mkdir(codexRoot, { recursive: true })
+    const content = Buffer.from('---\nname: review-code\ndescription: Review safely.\n---\n')
+    const revision = '1'.repeat(40)
+    const blobSha = createHash('sha1')
+      .update(`blob ${content.length}\0`)
+      .update(content)
+      .digest('hex')
+    const json = (value: object, status = 200) => new Response(JSON.stringify(value), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const fetchSource = async (input: string) => {
+      if (input.endsWith('/commits/main')) return json({ sha: revision })
+      if (input.endsWith(`/git/commits/${revision}`)) {
+        return json({ sha: revision, tree: { sha: 'a'.repeat(40) } })
+      }
+      if (input.endsWith(`/git/trees/${'a'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'skills', mode: '040000', type: 'tree', sha: 'b'.repeat(40) }] })
+      }
+      if (input.endsWith(`/git/trees/${'b'.repeat(40)}`)) {
+        return json({ tree: [{ path: 'review-code', mode: '040000', type: 'tree', sha: 'c'.repeat(40) }] })
+      }
+      if (input.endsWith(`/git/trees/${'c'.repeat(40)}?recursive=1`)) {
+        return json({
+          truncated: false,
+          tree: [{ path: 'SKILL.md', mode: '100644', type: 'blob', size: content.length, sha: blobSha }],
+        })
+      }
+      if (input.startsWith('https://raw.githubusercontent.com/')) return new Response(content)
+      return json({}, 404)
+    }
+    const reconciler = new SkillReconciler({
+      homeDir: home,
+      agentLocations: [{ id: 'codex', label: 'Codex', relativePath: '.codex/skills' }],
+      fetchSource,
+    })
+
+    const preview = await reconciler.previewExternalSkill(
+      'https://github.com/example/skills/tree/main/skills/review-code',
+    )
+    const installed = await reconciler.apply(preview.planId)
+    if (installed.status !== 'applied') throw new Error(`Expected apply, received ${JSON.stringify(installed)}`)
+
+    expect(preview).toMatchObject({
+      skillId: 'review-code',
+      repository: 'example/skills',
+      path: 'skills/review-code',
+      revision,
+      destinations: ['Universal', 'Codex'],
+    })
+    expect(installed.snapshot.skills[0]).toMatchObject({
+      id: 'review-code',
+      sourceState: 'pinned',
+      health: 'healthy',
+    })
+    const lock = JSON.parse(await readFile(path.join(home, '.agents', '.skill-lock.json'), 'utf8'))
+    expect(lock.skills['review-code']).toMatchObject({
+      repository: 'example/skills',
+      path: 'skills/review-code',
+      revision,
+      sha256: preview.sha256,
     })
   })
 

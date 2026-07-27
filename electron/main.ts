@@ -20,6 +20,9 @@ const channels = {
   scan: 'skillledger:scan',
   readSkillContent: 'skillledger:skill:read-content',
   revealSkill: 'skillledger:skill:reveal',
+  previewExternalSkill: 'skillledger:external:preview',
+  installExternalSkill: 'skillledger:external:install',
+  deleteSkill: 'skillledger:skill:delete',
   checkSourceUpdates: 'skillledger:source:check-updates',
   exportInventory: 'skillledger:inventory:export',
   preview: 'skillledger:reconcile:preview',
@@ -153,6 +156,18 @@ function registerIpc(): void {
     const skillId = parseSkillId(value)
     shell.showItemInFolder(path.join(homeDir, '.agents', 'skills', skillId, 'SKILL.md'))
   })
+  ipcMain.handle(channels.previewExternalSkill, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return reconciler.previewExternalSkill(parseExternalSkillUrl(value))
+  })
+  ipcMain.handle(channels.installExternalSkill, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return reconciler.apply(parseOpaqueId(value))
+  })
+  ipcMain.handle(channels.deleteSkill, async (event, value: unknown) => {
+    assertTrustedSender(event)
+    return reconciler.deleteSkill(parseSkillId(value))
+  })
   ipcMain.handle(channels.checkSourceUpdates, async (event) => {
     assertTrustedSender(event)
     const snapshot = await reconciler.scan()
@@ -236,6 +251,18 @@ function parseOpaqueId(value: unknown): string {
 
 function parseSkillId(value: unknown): string {
   if (typeof value !== 'string' || !validSkillId(value)) throw new Error('Invalid skill identifier')
+  return value
+}
+
+function parseExternalSkillUrl(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !value
+    || Buffer.byteLength(value) > 2_048
+    || value.includes('\0')
+  ) {
+    throw new Error('Invalid GitHub skill URL')
+  }
   return value
 }
 

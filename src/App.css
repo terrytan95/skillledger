@@ -37,7 +37,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
 .primary-nav button.active::after {
   content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; height: 2px; background: var(--accent);
 }
-.header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.header-actions { margin-left: auto; display: flex; align-items: center; justify-content: end; flex-wrap: wrap; gap: 8px; }
 .header-status {
   max-width: 180px;
   overflow: hidden;
@@ -226,7 +226,10 @@ main { min-height: 0; overflow: hidden; }
 }
 .workbench-title > span { color: var(--muted); font-size: 0.8rem; }
 .workbench-title > span strong { margin-left: 5px; color: var(--ink); font-size: 0.9rem; }
+.workbench-actions { display: flex; align-items: center; gap: 7px; }
 .open-reader-button { white-space: nowrap; }
+.danger-button { color: var(--broken-ink); }
+.danger-button:hover:not(:disabled) { border-color: var(--broken-ink); background: var(--broken-bg); }
 .workbench-tabs {
   display: flex;
   align-items: end;
@@ -500,6 +503,26 @@ main { min-height: 0; overflow: hidden; }
 .plan-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); }
 .plan-safety { display: flex; gap: 10px; margin: 22px 0; padding: 13px; background: var(--subtle); color: var(--copy-secondary); }
 .plan-safety p { margin: 0; font-size: 0.9rem; line-height: 1.5; }
+.external-skill-panel { width: min(480px, 94vw); }
+.external-skill-description { margin: 24px 0 18px; color: var(--copy-secondary); font-size: 1rem; line-height: 1.55; }
+.github-skill-form { display: grid; gap: 9px; }
+.github-skill-form label { font-size: 0.9rem; font-weight: 750; }
+.github-skill-form input {
+  min-width: 0; height: 38px; box-sizing: border-box; padding: 0 11px;
+  border: 1px solid var(--line); background: var(--surface-raised); color: var(--ink);
+  font: 0.9rem ui-monospace, monospace;
+}
+.github-skill-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.github-skill-form button { justify-self: start; }
+.external-skill-preview { margin-top: 24px; border: 1px solid var(--line); background: var(--surface-raised); }
+.external-skill-preview > div { padding: 16px; border-bottom: 1px solid var(--line); }
+.external-skill-preview h3 { margin: 4px 0 5px; font-family: var(--display-font-family); font-size: 1.8rem; font-weight: 500; }
+.external-skill-preview p { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+.external-skill-preview dl { margin: 0; }
+.external-skill-preview dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.external-skill-preview dl > div:last-child { border-bottom: 0; }
+.external-skill-preview dt { color: var(--muted); font-size: 0.8rem; }
+.external-skill-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 0.9rem; }
 
 .control-bar.simple { grid-template-columns: 1fr; }
 .workspace-view { height: 100%; box-sizing: border-box; padding: 28px clamp(22px, 5vw, 72px); overflow: auto; }

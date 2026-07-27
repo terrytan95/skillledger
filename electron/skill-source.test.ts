@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { fingerprint } from './path-fingerprint'
-import { discoverGitHubSourceUpdates, stageGitHubSkill } from './skill-source'
+import { discoverGitHubSourceUpdates, resolveGitHubSkillUrl, stageGitHubSkill } from './skill-source'
 
 const temporaryDirectories: string[] = []
 
@@ -24,6 +24,27 @@ function json(value: object, status = 200): Response {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+describe('resolveGitHubSkillUrl', () => {
+  it('resolves a public GitHub directory link to an exact commit and rejects other hosts', async () => {
+    const fetchSource = async (input: string) => input.endsWith('/commits/main')
+      ? json({ sha: '1'.repeat(40) })
+      : json({}, 422)
+
+    await expect(resolveGitHubSkillUrl(
+      'https://github.com/example/skills/tree/main/skills/demo',
+      fetchSource,
+    )).resolves.toEqual({
+      repository: 'example/skills',
+      path: 'skills/demo',
+      revision: '1'.repeat(40),
+    })
+    await expect(resolveGitHubSkillUrl(
+      'https://example.com/example/skills/tree/main/skills/demo',
+      fetchSource,
+    )).rejects.toThrow('Only public https://github.com')
+  })
+})
 
 describe('stageGitHubSkill', () => {
   it('stages an exact pinned public GitHub tree and verifies its SHA-256', async () => {

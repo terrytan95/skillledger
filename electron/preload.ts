@@ -4,6 +4,7 @@ import type {
   AppUpdateStatus,
   ApplyResult,
   DiscardResult,
+  ExternalSkillPreview,
   InventoryExportResult,
   InventorySnapshot,
   ReconcileRequest,
@@ -26,6 +27,18 @@ const bridge: SkillLedgerBridge = {
     'skillledger:skill:reveal',
     skillId,
   ) as Promise<void>,
+  previewExternalSkill: (url: string) => ipcRenderer.invoke(
+    'skillledger:external:preview',
+    url,
+  ) as Promise<ExternalSkillPreview>,
+  installExternalSkill: (planId: string) => ipcRenderer.invoke(
+    'skillledger:external:install',
+    planId,
+  ) as Promise<ApplyResult>,
+  deleteSkill: (skillId: string) => ipcRenderer.invoke(
+    'skillledger:skill:delete',
+    skillId,
+  ) as Promise<ApplyResult>,
   checkSourceUpdates: () => ipcRenderer.invoke(
     'skillledger:source:check-updates',
   ) as Promise<SourceUpdateSnapshot>,
