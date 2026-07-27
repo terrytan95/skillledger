@@ -25,6 +25,7 @@ import {
   Monitor,
   Moon,
   Palette,
+  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -39,6 +40,7 @@ import {
 import type {
   ActivitySnapshot,
   AppUpdateStatus,
+  ExternalSkillPreview,
   InventorySnapshot,
   ReconciliationPreview,
   SkillContentEntry,
@@ -343,6 +345,9 @@ function LedgerView({
   onContentMode,
   onSelectFile,
   onOpenReader,
+  canManage,
+  deleting,
+  onDelete,
 }: {
   skills: SkillRecord[]
   selected: SkillRecord | undefined
@@ -360,6 +365,9 @@ function LedgerView({
   onContentMode: (mode: ContentMode) => void
   onSelectFile: (path: string) => void
   onOpenReader: () => void
+  canManage: boolean
+  deleting: boolean
+  onDelete: () => void
 }) {
   const [tab, setTab] = useState<WorkbenchTab>('content')
   const [splitRatio, setSplitRatio] = useState(readLedgerSplitRatio)
@@ -465,9 +473,16 @@ function LedgerView({
                 <div><h2>{selected.name}</h2><StatusChip health={selected.health} copy={copy} /></div>
                 <span>{copy.source} <strong>{selected.source ?? copy.localOnly}</strong></span>
               </div>
-              <button className="secondary-button open-reader-button" onClick={onOpenReader}>
-                <BookOpen size={14} aria-hidden="true" />{copy.openReader}
-              </button>
+              <div className="workbench-actions">
+                {canManage && (
+                  <button className="secondary-button danger-button" onClick={onDelete} disabled={deleting}>
+                    <Trash2 size={14} aria-hidden="true" />{deleting ? copy.deletingSkill : copy.deleteSkill}
+                  </button>
+                )}
+                <button className="secondary-button open-reader-button" onClick={onOpenReader}>
+                  <BookOpen size={14} aria-hidden="true" />{copy.openReader}
+                </button>
+              </div>
             </header>
             <nav className="workbench-tabs" aria-label={copy.skillDetail}>
               {(['overview', 'content', 'files'] as WorkbenchTab[]).map((item) => (
@@ -758,6 +773,104 @@ function TeamView({ copy }: { copy: Messages }) {
   )
 }
 
+function ExternalSkillPanel({
+  copy,
+  onClose,
+  onInstalled,
+}: {
+  copy: Messages
+  onClose: () => void
+  onInstalled: (snapshot: InventorySnapshot, skillId: string) => void
+}) {
+  const [url, setUrl] = useState('')
+  const [preview, setPreview] = useState<ExternalSkillPreview | null>(null)
+  const [working, setWorking] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const parseLink = async () => {
+    if (!window.skillLedger) return
+    setWorking(true)
+    setMessage('')
+    setPreview(null)
+    try {
+      setPreview(await window.skillLedger.previewExternalSkill(url.trim()))
+    } catch (error) {
+      setMessage((error as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const install = async () => {
+    if (!window.skillLedger || !preview) return
+    setWorking(true)
+    setMessage('')
+    try {
+      const result = await window.skillLedger.installExternalSkill(preview.planId)
+      if (result.status === 'applied' || result.status === 'already-applied') {
+        onInstalled(result.snapshot, preview.skillId)
+      } else {
+        setMessage(result.error.message)
+      }
+    } catch (error) {
+      setMessage((error as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <div className="plan-backdrop" role="presentation" onMouseDown={onClose}>
+      <aside className="plan-panel external-skill-panel" role="dialog" aria-modal="true" aria-label={copy.addExternalSkill} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="plan-title">
+          <div><p className="eyebrow">GitHub</p><h2>{copy.addExternalSkill}</h2></div>
+          <button className="icon-button" onClick={onClose} aria-label={copy.closePreview}><X size={18} /></button>
+        </div>
+        <div className="plan-scroll">
+          <p className="external-skill-description">{copy.externalSkillDescription}</p>
+          <form className="github-skill-form" onSubmit={(event) => { event.preventDefault(); void parseLink() }}>
+            <label htmlFor="github-skill-url">{copy.githubSkillUrl}</label>
+            <input
+              id="github-skill-url"
+              type="url"
+              required
+              value={url}
+              onChange={(event) => {
+                setUrl(event.target.value)
+                setPreview(null)
+                setMessage('')
+              }}
+              placeholder={copy.githubSkillPlaceholder}
+              autoFocus
+            />
+            <button className="secondary-button" type="submit" disabled={working || !url.trim()}>
+              <GitBranch size={14} aria-hidden="true" />{working && !preview ? copy.parsingLink : copy.parseLink}
+            </button>
+          </form>
+          {preview && (
+            <section className="external-skill-preview" aria-label={copy.skillReady}>
+              <div><p className="eyebrow">{copy.skillReady}</p><h3>{preview.name}</h3><p>{preview.description}</p></div>
+              <dl>
+                <div><dt>{copy.source}</dt><dd>{preview.repository}</dd></div>
+                <div><dt>{copy.sourcePath}</dt><dd><code>{preview.path || '/'}</code></dd></div>
+                <div><dt>{copy.pinnedCommit}</dt><dd><code>{preview.revision.slice(0, 12)}</code></dd></div>
+                <div><dt>{copy.installDestinations}</dt><dd>{preview.destinations.join(' · ')}</dd></div>
+              </dl>
+            </section>
+          )}
+          {message && <p className="workspace-message" role="alert">{message}</p>}
+        </div>
+        <div className="plan-actions">
+          <button className="secondary-button" onClick={onClose}>{copy.cancel}</button>
+          <button className="primary-button" onClick={() => void install()} disabled={!preview || working}>
+            <Plus size={14} aria-hidden="true" />{working && preview ? copy.installingSkill : copy.installSkill}
+          </button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function PlanPanel({
   copy,
   liveMode,
@@ -851,6 +964,8 @@ function PlanPanel({
     'replace-copy': copy.replaceIndependentCopy,
     'restore-canonical': copy.restorePinnedSource,
     'update-canonical': copy.replaceCanonicalDrift,
+    'remove-path': copy.removeSkillPath,
+    'write-lock': copy.updateSourceLock,
   } as const
   const changeCount = preview?.operations.length ?? 0
   const copyBlockers = preview?.blockers.filter((blocker) => blocker.code === 'copy-requires-confirmation').length ?? 0
@@ -1194,6 +1309,8 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [scanError, setScanError] = useState('')
   const [planOpen, setPlanOpen] = useState(false)
+  const [externalSkillOpen, setExternalSkillOpen] = useState(false)
+  const [deletingSkillId, setDeletingSkillId] = useState<string | null>(null)
   const [liveMode, setLiveMode] = useState(false)
   const [view, setView] = useState<View>('inventory')
   const [readerOpen, setReaderOpen] = useState(false)
@@ -1425,6 +1542,31 @@ export default function App() {
     }
   }
 
+  const deleteSelectedSkill = async () => {
+    if (
+      !selected
+      || !window.skillLedger
+      || !window.confirm(copy.deleteSkillConfirmation.replace('{skill}', selected.name))
+    ) return
+    setDeletingSkillId(selected.id)
+    setInventoryMessage('')
+    try {
+      const result = await window.skillLedger.deleteSkill(selected.id)
+      if (result.status === 'applied' || result.status === 'already-applied') {
+        setSnapshot(result.snapshot)
+        setSelectedId(result.snapshot.skills[0]?.id ?? '')
+        setInventoryMessage(`${copy.deletedSkill}: ${selected.name}`)
+      } else {
+        if (result.status === 'rolled-back') setSnapshot(result.snapshot)
+        setInventoryMessage(`${copy.deleteFailed}: ${result.error.message}`)
+      }
+    } catch (error) {
+      setInventoryMessage(`${copy.deleteFailed}: ${(error as Error).message}`)
+    } finally {
+      setDeletingSkillId(null)
+    }
+  }
+
   const showView = (next: View) => {
     setReaderOpen(false)
     setView(next)
@@ -1447,6 +1589,9 @@ export default function App() {
           <div className="header-actions">
             <span className={`mode-badge ${liveMode ? 'live' : ''}`}>{liveMode ? copy.liveScan : copy.demoData}</span>
             <span className="header-status" aria-live="polite">{inventoryMessage}</span>
+            {!readerOpen && <button className="primary-button" onClick={() => setExternalSkillOpen(true)} disabled={!window.skillLedger || !liveMode}>
+              <Plus size={15} />{copy.addSkill}
+            </button>}
             {!readerOpen && <button className="secondary-button" onClick={() => void checkSourceUpdates()} disabled={!window.skillLedger || sourceCheckPhase === 'checking'}>
               <GitBranch size={15} />{sourceCheckPhase === 'checking' ? copy.checkingSources : copy.checkSourceUpdates}
             </button>}
@@ -1524,6 +1669,9 @@ export default function App() {
             onContentMode={setContentMode}
             onSelectFile={selectFile}
             onOpenReader={() => setReaderOpen(true)}
+            canManage={liveMode && Boolean(window.skillLedger)}
+            deleting={deletingSkillId === selected?.id}
+            onDelete={() => void deleteSelectedSkill()}
           />
         )}
         {view === 'activity' && <ActivityView onSnapshot={setSnapshot} copy={copy} language={language} />}
@@ -1574,6 +1722,19 @@ export default function App() {
           <span className="footer-version">SkillLedger v{appVersion}</span>
         )}
       </footer>}
+      {externalSkillOpen && (
+        <ExternalSkillPanel
+          copy={copy}
+          onClose={() => setExternalSkillOpen(false)}
+          onInstalled={(next, skillId) => {
+            setSnapshot(next)
+            setSelectedId(skillId)
+            setSourceUpdates(null)
+            setInventoryMessage(`${copy.installedSkill}: ${skillId}`)
+            setExternalSkillOpen(false)
+          }}
+        />
+      )}
       {planOpen && (
         <PlanPanel
           copy={copy}

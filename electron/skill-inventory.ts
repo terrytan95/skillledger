@@ -185,7 +185,11 @@ async function listSkillNames(root: string): Promise<string[]> {
   try {
     const entries = await readdir(root, { withFileTypes: true })
     return entries
-      .filter((entry) => !entry.name.startsWith('.') && (entry.isDirectory() || entry.isSymbolicLink()))
+      .filter((entry) => (
+        !entry.name.startsWith('.')
+        && !/\.skillledger-[0-9a-f-]{36}\.backup$/i.test(entry.name)
+        && (entry.isDirectory() || entry.isSymbolicLink())
+      ))
       .map((entry) => entry.name)
   } catch {
     return []
@@ -197,7 +201,7 @@ function frontmatterValue(markdown: string, key: string): string | null {
   return match?.[1]?.trim().replace(/^["']|["']$/g, '') ?? null
 }
 
-async function readSkillMetadata(skillPath: string, fallbackName: string): Promise<{ name: string; description: string }> {
+export async function readSkillMetadata(skillPath: string, fallbackName: string): Promise<{ name: string; description: string }> {
   try {
     const markdown = await readFile(path.join(skillPath, 'SKILL.md'), 'utf8')
     return {

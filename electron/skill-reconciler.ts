@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   lstat,
   mkdir,
@@ -9,19 +9,19 @@ import {
   rename,
   rm,
   symlink,
-  unlink,
 } from 'node:fs/promises'
 import path from 'node:path'
-import { scanGlobalSkills } from './skill-inventory'
+import { readSkillMetadata, scanGlobalSkills, validSkillId } from './skill-inventory'
 import type { AgentLocation } from './skill-inventory'
 import { fingerprint, fingerprintsMatch } from './path-fingerprint'
-import { stageGitHubSkill } from './skill-source'
+import { stageGitHubSkill, stageGitHubSkillFromUrl } from './skill-source'
 import type { FetchSource } from './skill-source'
 import type { TeamManager } from './team-policy'
 import type {
   ActivitySnapshot,
   ApplyResult,
   DiscardResult,
+  ExternalSkillPreview,
   JournalActivity,
   PathFingerprint,
   PlanBlocker,
@@ -41,11 +41,13 @@ interface SkillReconcilerOptions {
 
 interface StoredOperation {
   public: PlannedOperation
-  rootKind?: 'agent' | 'canonical'
+  rootKind?: 'agent' | 'canonical' | 'lock'
   agentRoot: string
   canonicalRoot: string
   canonicalBefore: PathFingerprint
   sourcePin?: SourcePin
+  untrackedSource?: boolean
+  lockContent?: string
 }
 
 interface StoredPlan {
@@ -95,6 +97,18 @@ function isInside(root: string, candidate: string): boolean {
     && !path.isAbsolute(relative)
 }
 
+async function ensureManagedDirectory(parent: string, name: string): Promise<string> {
+  const parentRoot = await realpath(parent)
+  const directory = path.join(parent, name)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const metadata = await lstat(directory)
+  const resolved = await realpath(directory)
+  if (!metadata.isDirectory() || !isInside(parentRoot, resolved)) {
+    throw new Error(`Managed directory is outside its parent: ${directory}`)
+  }
+  return directory
+}
+
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await open(directory, 'r')
   try {
@@ -127,6 +141,33 @@ async function writeJournalPlan(journalDirectory: string, plan: JournalPlan): Pr
   await syncDirectory(journalDirectory)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function readSkillLock(homeDir: string): Promise<Record<string, unknown>> {
+  const lockPath = path.join(homeDir, '.agents', '.skill-lock.json')
+  try {
+    const metadata = await lstat(lockPath)
+    if (!metadata.isFile()) throw new Error('Global skill lock must be a regular file.')
+    if (metadata.size > 1024 * 1024) throw new Error('Global skill lock exceeds 1 MiB.')
+    const lock = JSON.parse(await readFile(lockPath, 'utf8')) as unknown
+    if (!isRecord(lock) || (lock.skills !== undefined && !isRecord(lock.skills))) {
+      throw new Error('Global skill lock has an invalid shape.')
+    }
+    return lock
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 3, skills: {} }
+    throw error
+  }
+}
+
+function serializeSkillLock(lock: Record<string, unknown>): string {
+  const content = `${JSON.stringify(lock, null, 2)}\n`
+  if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Global skill lock exceeds 1 MiB.')
+  return content
+}
+
 function isSourceOperation(
   operation: StoredOperation,
 ): operation is StoredOperation & {
@@ -134,6 +175,14 @@ function isSourceOperation(
 } {
   return operation.public.kind === 'restore-canonical'
     || operation.public.kind === 'update-canonical'
+}
+
+function isRemoveOperation(operation: StoredOperation): boolean {
+  return operation.public.kind === 'remove-path'
+}
+
+function isLockOperation(operation: StoredOperation): boolean {
+  return operation.public.kind === 'write-lock'
 }
 
 export class SkillReconciler {
@@ -350,6 +399,299 @@ export class SkillReconciler {
     return preview
   }
 
+  async previewExternalSkill(url: string): Promise<ExternalSkillPreview> {
+    const agentsRoot = await ensureManagedDirectory(this.options.homeDir, '.agents')
+    const canonicalRoot = await ensureManagedDirectory(agentsRoot, 'skills')
+    const skillLedgerRoot = await ensureManagedDirectory(agentsRoot, '.skillledger')
+    const stagingRoot = await ensureManagedDirectory(skillLedgerRoot, 'staging')
+    const stagingPath = path.join(stagingRoot, randomUUID())
+
+    try {
+      const sourcePin = await stageGitHubSkillFromUrl(
+        url,
+        stagingPath,
+        this.options.fetchSource ?? fetch,
+      )
+      const fallbackName = path.posix.basename(sourcePin.path) || sourcePin.repository.split('/')[1]
+      const metadata = await readSkillMetadata(stagingPath, fallbackName)
+      if (!validSkillId(metadata.name)) throw new Error('GitHub skill has an invalid frontmatter name.')
+      const skillId = metadata.name
+      const inventory = await this.scan()
+      if (inventory.skills.some((skill) => skill.id === skillId)) {
+        throw new Error(`Skill is already installed or managed: ${skillId}.`)
+      }
+      const approval = await this.options.teamManager?.authorize(
+        'restore-canonical',
+        skillId,
+        sourcePin,
+      )
+      if (approval && !approval.allowed) throw new Error(approval.reason ?? 'Team approval is required.')
+
+      const canonicalPath = path.join(canonicalRoot, skillId)
+      const canonicalBefore = await fingerprint(canonicalPath)
+      if (canonicalBefore.kind !== 'missing') throw new Error(`Canonical skill already exists: ${skillId}.`)
+      const operations: PlannedOperation[] = []
+      const storedOperations: StoredOperation[] = []
+      const sourceOperation: PlannedOperation = {
+        id: `${skillId}:universal:source`,
+        skillId,
+        agentId: 'universal',
+        kind: 'restore-canonical',
+        targetPath: canonicalPath,
+        canonicalPath,
+        before: canonicalBefore,
+        after: { kind: 'directory', sha256: sourcePin.sha256, linkTarget: null },
+        sourcePin,
+      }
+      operations.push(sourceOperation)
+      storedOperations.push({
+        public: sourceOperation,
+        rootKind: 'canonical',
+        agentRoot: canonicalRoot,
+        canonicalRoot,
+        canonicalBefore,
+        sourcePin,
+        untrackedSource: true,
+      })
+
+      const destinations = ['Universal']
+      for (const agent of this.options.agentLocations) {
+        const agentRoot = path.resolve(this.options.homeDir, agent.relativePath)
+        if ((await fingerprint(agentRoot)).kind !== 'directory') continue
+        const targetPath = path.join(agentRoot, skillId)
+        const before = await fingerprint(targetPath)
+        if (before.kind !== 'missing') {
+          throw new Error(`${agent.label} already has an entry named ${skillId}.`)
+        }
+        const operation: PlannedOperation = {
+          id: `${skillId}:${agent.id}`,
+          skillId,
+          agentId: agent.id,
+          kind: 'create-symlink',
+          targetPath,
+          canonicalPath,
+          before,
+          after: { kind: 'symlink', sha256: sourcePin.sha256, linkTarget: canonicalPath },
+        }
+        operations.push(operation)
+        storedOperations.push({
+          public: operation,
+          rootKind: 'agent',
+          agentRoot,
+          canonicalRoot,
+          canonicalBefore: sourceOperation.after,
+        })
+        destinations.push(agent.label)
+      }
+
+      const lock = await readSkillLock(this.options.homeDir)
+      const skills = isRecord(lock.skills) ? lock.skills : {}
+      if (skills[skillId] !== undefined) throw new Error(`Global skill lock already tracks ${skillId}.`)
+      const now = new Date().toISOString()
+      const lockContent = serializeSkillLock({
+        ...lock,
+        version: lock.version ?? 3,
+        skills: {
+          ...skills,
+          [skillId]: {
+            source: sourcePin.repository,
+            sourceType: 'github',
+            sourceUrl: `https://github.com/${sourcePin.repository}.git`,
+            skillPath: `${sourcePin.path ? `${sourcePin.path}/` : ''}SKILL.md`,
+            installedAt: now,
+            updatedAt: now,
+            ...sourcePin,
+          },
+        },
+      })
+      const lockPath = path.join(agentsRoot, '.skill-lock.json')
+      const lockBefore = await fingerprint(lockPath)
+      const lockOperation: PlannedOperation = {
+        id: `${skillId}:lock`,
+        skillId,
+        agentId: 'universal',
+        kind: 'write-lock',
+        targetPath: lockPath,
+        canonicalPath,
+        before: lockBefore,
+        after: {
+          kind: 'file',
+          sha256: createHash('sha256').update(lockContent).digest('hex'),
+          linkTarget: null,
+        },
+      }
+      operations.push(lockOperation)
+      storedOperations.push({
+        public: lockOperation,
+        rootKind: 'lock',
+        agentRoot: agentsRoot,
+        canonicalRoot,
+        canonicalBefore: sourceOperation.after,
+        lockContent,
+      })
+
+      const planId = randomUUID()
+      const preview: ReconciliationPreview = {
+        planId,
+        status: 'ready',
+        generatedAt: now,
+        algorithm: 'sha256-tree-v1',
+        operations,
+        blockers: [],
+        summary: {
+          createLinks: destinations.length - 1,
+          repairLinks: 0,
+          replaceCopies: 0,
+          restoreCanonical: 1,
+          updateCanonical: 0,
+          unchanged: 0,
+          blocked: 0,
+        },
+        warnings: [],
+      }
+      pruneTransientEntries(this.plans)
+      this.plans.set(planId, {
+        preview,
+        operations: storedOperations,
+        expiresAt: Date.now() + TRANSIENT_TTL_MS,
+      })
+      return {
+        planId,
+        skillId,
+        name: metadata.name,
+        description: metadata.description,
+        repository: sourcePin.repository,
+        path: sourcePin.path,
+        revision: sourcePin.revision,
+        sha256: sourcePin.sha256,
+        destinations,
+      }
+    } finally {
+      await rm(stagingPath, { recursive: true, force: true })
+    }
+  }
+
+  async deleteSkill(skillId: string): Promise<ApplyResult> {
+    if (!validSkillId(skillId)) throw new Error('Invalid skill identifier.')
+    const teamPins = await this.options.teamManager?.sourcePins()
+    if (teamPins?.[skillId]) throw new Error('Team-managed skills must be removed from the signed manifest.')
+
+    const inventory = await this.scan()
+    if (!inventory.skills.some((skill) => skill.id === skillId)) throw new Error(`Unknown skill: ${skillId}.`)
+    const agentsRoot = await ensureManagedDirectory(this.options.homeDir, '.agents')
+    const canonicalRoot = await ensureManagedDirectory(agentsRoot, 'skills')
+    const canonicalPath = path.join(canonicalRoot, skillId)
+    const canonicalBefore = await fingerprint(canonicalPath)
+    const operations: PlannedOperation[] = []
+    const storedOperations: StoredOperation[] = []
+
+    for (const agent of this.options.agentLocations) {
+      const agentRoot = path.resolve(this.options.homeDir, agent.relativePath)
+      const targetPath = path.join(agentRoot, skillId)
+      const before = await fingerprint(targetPath)
+      if (before.kind === 'missing') continue
+      const operation: PlannedOperation = {
+        id: `${skillId}:${agent.id}:remove`,
+        skillId,
+        agentId: agent.id,
+        kind: 'remove-path',
+        targetPath,
+        canonicalPath,
+        before,
+        after: { kind: 'missing', sha256: null, linkTarget: null },
+      }
+      operations.push(operation)
+      storedOperations.push({
+        public: operation,
+        rootKind: 'agent',
+        agentRoot,
+        canonicalRoot,
+        canonicalBefore,
+      })
+    }
+    if (canonicalBefore.kind !== 'missing') {
+      const operation: PlannedOperation = {
+        id: `${skillId}:universal:remove`,
+        skillId,
+        agentId: 'universal',
+        kind: 'remove-path',
+        targetPath: canonicalPath,
+        canonicalPath,
+        before: canonicalBefore,
+        after: { kind: 'missing', sha256: null, linkTarget: null },
+      }
+      operations.push(operation)
+      storedOperations.push({
+        public: operation,
+        rootKind: 'canonical',
+        agentRoot: canonicalRoot,
+        canonicalRoot,
+        canonicalBefore,
+      })
+    }
+
+    const lock = await readSkillLock(this.options.homeDir)
+    const skills = isRecord(lock.skills) ? lock.skills : {}
+    if (skills[skillId] !== undefined) {
+      const nextSkills = { ...skills }
+      delete nextSkills[skillId]
+      const lockContent = serializeSkillLock({ ...lock, skills: nextSkills })
+      const lockPath = path.join(agentsRoot, '.skill-lock.json')
+      const lockBefore = await fingerprint(lockPath)
+      const lockOperation: PlannedOperation = {
+        id: `${skillId}:lock`,
+        skillId,
+        agentId: 'universal',
+        kind: 'write-lock',
+        targetPath: lockPath,
+        canonicalPath,
+        before: lockBefore,
+        after: {
+          kind: 'file',
+          sha256: createHash('sha256').update(lockContent).digest('hex'),
+          linkTarget: null,
+        },
+      }
+      operations.push(lockOperation)
+      storedOperations.push({
+        public: lockOperation,
+        rootKind: 'lock',
+        agentRoot: agentsRoot,
+        canonicalRoot,
+        canonicalBefore,
+        lockContent,
+      })
+    }
+    if (!operations.length) throw new Error(`Nothing is installed for ${skillId}.`)
+
+    const planId = randomUUID()
+    const preview: ReconciliationPreview = {
+      planId,
+      status: 'ready',
+      generatedAt: new Date().toISOString(),
+      algorithm: 'sha256-tree-v1',
+      operations,
+      blockers: [],
+      summary: {
+        createLinks: 0,
+        repairLinks: 0,
+        replaceCopies: 0,
+        restoreCanonical: 0,
+        updateCanonical: 0,
+        unchanged: 0,
+        blocked: 0,
+      },
+      warnings: [],
+    }
+    pruneTransientEntries(this.plans)
+    this.plans.set(planId, {
+      preview,
+      operations: storedOperations,
+      expiresAt: Date.now() + TRANSIENT_TTL_MS,
+    })
+    return this.apply(planId)
+  }
+
   async apply(planId: string): Promise<ApplyResult> {
     pruneTransientEntries(this.plans)
     pruneTransientEntries(this.planReceipts)
@@ -463,15 +805,26 @@ export class SkillReconciler {
         await this.assertSafe(operation)
         const target = operation.public.targetPath
         const temporary = `${target}.skillledger-${journalId}.tmp`
-        temporaryPaths.push(temporary)
         if (isSourceOperation(operation)) {
+          temporaryPaths.push(temporary)
           if (!operation.sourcePin) throw new Error('Source operation has no pinned GitHub source.')
           await stageGitHubSkill(
             operation.sourcePin,
             temporary,
             this.options.fetchSource ?? fetch,
           )
-        } else {
+        } else if (isLockOperation(operation)) {
+          temporaryPaths.push(temporary)
+          if (operation.lockContent === undefined) throw new Error('Lock operation has no content.')
+          const handle = await open(temporary, 'wx', 0o600)
+          try {
+            await handle.writeFile(operation.lockContent)
+            await handle.sync()
+          } finally {
+            await handle.close()
+          }
+        } else if (!isRemoveOperation(operation)) {
+          temporaryPaths.push(temporary)
           await symlink(path.relative(path.dirname(target), operation.public.canonicalPath), temporary, 'dir')
         }
         if (operation.backupPath) {
@@ -489,16 +842,20 @@ export class SkillReconciler {
         if ((await fingerprint(target)).kind !== 'missing') {
           throw new Error(`Target changed while applying ${operation.public.skillId}.`)
         }
-        await rename(temporary, target)
-        await syncDirectory(path.dirname(target))
+        if (!isRemoveOperation(operation)) {
+          await rename(temporary, target)
+          await syncDirectory(path.dirname(target))
+        }
         if (!operation.backupPath) applied.push(operation)
         await appendJournalEvent(journalDirectory, { status: 'applied', operationId: operation.public.id })
       }
 
       for (const operation of applied) {
         const actual = await fingerprint(operation.public.targetPath)
-        const verified = isSourceOperation(operation)
+        const verified = isSourceOperation(operation) || isLockOperation(operation)
           ? fingerprintsMatch(actual, operation.public.after)
+          : isRemoveOperation(operation)
+            ? actual.kind === 'missing'
           : actual.kind === 'symlink'
             && actual.linkTarget === operation.public.canonicalPath
             && fingerprintsMatch(
@@ -1064,6 +1421,25 @@ export class SkillReconciler {
       throw new Error(`Canonical root is outside the managed home: ${canonicalRoot}`)
     }
 
+    if (isLockOperation(operation)) {
+      const agentsRoot = path.join(this.options.homeDir, '.agents')
+      if (
+        operation.rootKind !== 'lock'
+        || operation.agentRoot !== agentsRoot
+        || targetPath !== path.join(agentsRoot, '.skill-lock.json')
+        || path.dirname(targetPath) !== agentsRoot
+        || operation.lockContent === undefined
+        || Buffer.byteLength(operation.lockContent) > 1024 * 1024
+        || createHash('sha256').update(operation.lockContent).digest('hex') !== operation.public.after.sha256
+      ) {
+        throw new Error('Global skill lock operation is invalid.')
+      }
+      if (!fingerprintsMatch(await fingerprint(targetPath), operation.public.before)) {
+        throw new StalePlanError(`The global skill lock changed after preview for ${operation.public.skillId}.`)
+      }
+      return
+    }
+
     if (isSourceOperation(operation)) {
       if (
         operation.rootKind !== 'canonical'
@@ -1077,7 +1453,14 @@ export class SkillReconciler {
       const currentPin = (await this.scan()).skills.find(
         (skill) => skill.id === operation.public.skillId,
       )?.sourcePin
-      if (!operation.sourcePin || JSON.stringify(currentPin) !== JSON.stringify(operation.sourcePin)) {
+      if (
+        !operation.sourcePin
+        || (
+          operation.untrackedSource
+            ? currentPin !== undefined
+            : JSON.stringify(currentPin) !== JSON.stringify(operation.sourcePin)
+        )
+      ) {
         throw new StalePlanError(`The pinned source changed after preview for ${operation.public.skillId}.`)
       }
       const approval = await this.options.teamManager?.authorize(
@@ -1092,7 +1475,20 @@ export class SkillReconciler {
       return
     }
 
-    const canonical = skipCanonical
+    if (isRemoveOperation(operation) && operation.rootKind === 'canonical') {
+      if (
+        operation.agentRoot !== operation.canonicalRoot
+        || path.dirname(targetPath) !== operation.canonicalRoot
+        || targetPath !== canonicalPath
+        || path.dirname(canonicalPath) !== operation.canonicalRoot
+        || !fingerprintsMatch(await fingerprint(targetPath), operation.public.before)
+      ) {
+        throw new StalePlanError(`The filesystem changed after preview for ${operation.public.skillId}.`)
+      }
+      return
+    }
+
+    const canonical = skipCanonical || isRemoveOperation(operation)
       ? path.join(await realpath(path.dirname(canonicalPath)), path.basename(canonicalPath))
       : await realpath(canonicalPath)
     const canonicalRelative = path.relative(canonicalRoot, canonical)
@@ -1182,19 +1578,36 @@ export class SkillReconciler {
 
     const canonicalRoot = path.join(this.options.homeDir, '.agents', 'skills')
     const sourceOperation = isSourceOperation(operation)
-    const agent = sourceOperation
+    const lockOperation = isLockOperation(operation)
+    const canonicalOperation = sourceOperation
+      || (isRemoveOperation(operation) && operation.rootKind === 'canonical')
+    const agent = canonicalOperation || lockOperation
       ? null
       : this.options.agentLocations.find((candidate) => candidate.id === agentId)
-    if (!sourceOperation && !agent) throw new Error('Journal references an unknown Agent destination.')
-    const agentRoot = sourceOperation
-      ? canonicalRoot
-      : path.resolve(this.options.homeDir, agent!.relativePath)
+    if (!canonicalOperation && !lockOperation && !agent) {
+      throw new Error('Journal references an unknown Agent destination.')
+    }
+    const agentsRoot = path.join(this.options.homeDir, '.agents')
+    const agentRoot = lockOperation
+      ? agentsRoot
+      : canonicalOperation
+        ? canonicalRoot
+        : path.resolve(this.options.homeDir, agent!.relativePath)
+    const targetPath = lockOperation
+      ? path.join(agentsRoot, '.skill-lock.json')
+      : path.join(agentRoot, skillId)
     if (
       operation.canonicalRoot !== canonicalRoot
       || operation.agentRoot !== agentRoot
       || operation.public.canonicalPath !== path.join(canonicalRoot, skillId)
-      || operation.public.targetPath !== path.join(agentRoot, skillId)
-      || (sourceOperation && operation.rootKind !== 'canonical')
+      || operation.public.targetPath !== targetPath
+      || (canonicalOperation && operation.rootKind !== 'canonical')
+      || (lockOperation && (
+        operation.rootKind !== 'lock'
+        || operation.lockContent === undefined
+        || Buffer.byteLength(operation.lockContent) > 1024 * 1024
+        || createHash('sha256').update(operation.lockContent).digest('hex') !== operation.public.after.sha256
+      ))
     ) {
       throw new Error('Journal path is outside the configured roots.')
     }
@@ -1214,42 +1627,34 @@ export class SkillReconciler {
   }
 
   private matchesApplied(operation: StoredOperation, current: PathFingerprint): boolean {
-    return isSourceOperation(operation)
-      ? fingerprintsMatch(current, operation.public.after)
-      : current.kind === 'symlink' && current.linkTarget === operation.public.canonicalPath
+    if (isSourceOperation(operation) || isLockOperation(operation)) {
+      return fingerprintsMatch(current, operation.public.after)
+    }
+    if (isRemoveOperation(operation)) return current.kind === 'missing'
+    return current.kind === 'symlink' && current.linkTarget === operation.public.canonicalPath
   }
 
   private async restoreOperation(operation: JournalOperation): Promise<void> {
     const target = operation.public.targetPath
     const current = await fingerprint(target)
-    if (isSourceOperation(operation)) {
-      const displaced = `${target}.skillledger-rollback-${randomUUID()}.tmp`
-      if (current.kind !== 'missing') await rename(target, displaced)
-      try {
-        if (operation.backupPath) await rename(operation.backupPath, target)
-        if (!fingerprintsMatch(await fingerprint(target), operation.public.before)) {
-          throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
-        }
-        await syncDirectory(path.dirname(target))
-        if (current.kind !== 'missing') await rm(displaced, { recursive: true, force: true })
-      } catch (error) {
-        if (
-          (await fingerprint(target)).kind === 'missing'
-          && (await fingerprint(displaced)).kind !== 'missing'
-        ) {
-          await rename(displaced, target).catch(() => undefined)
-        }
-        throw error
+    const displaced = `${target}.skillledger-rollback-${randomUUID()}.tmp`
+    if (current.kind !== 'missing') await rename(target, displaced)
+    try {
+      if (operation.backupPath) await rename(operation.backupPath, target)
+      if (!fingerprintsMatch(await fingerprint(target), operation.public.before)) {
+        throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
       }
-      return
+      await syncDirectory(path.dirname(target))
+      if (current.kind !== 'missing') await rm(displaced, { recursive: true, force: true })
+    } catch (error) {
+      if (
+        (await fingerprint(target)).kind === 'missing'
+        && (await fingerprint(displaced)).kind !== 'missing'
+      ) {
+        await rename(displaced, target).catch(() => undefined)
+      }
+      throw error
     }
-
-    if (current.kind === 'symlink') await unlink(target)
-    if (operation.backupPath) await rename(operation.backupPath, target)
-    if (!fingerprintsMatch(await fingerprint(target), operation.public.before)) {
-      throw new Error(`Rollback verification failed for ${operation.public.skillId}.`)
-    }
-    await syncDirectory(path.dirname(target))
   }
 }
 

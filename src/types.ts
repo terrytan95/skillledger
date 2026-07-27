@@ -81,7 +81,14 @@ export interface PlannedOperation {
   id: string
   skillId: string
   agentId: string
-  kind: 'create-symlink' | 'repair-symlink' | 'replace-copy' | 'restore-canonical' | 'update-canonical'
+  kind:
+    | 'create-symlink'
+    | 'repair-symlink'
+    | 'replace-copy'
+    | 'restore-canonical'
+    | 'update-canonical'
+    | 'remove-path'
+    | 'write-lock'
   targetPath: string
   canonicalPath: string
   before: PathFingerprint
@@ -230,10 +237,25 @@ export type InventoryExportResult =
   | { status: 'exported'; fileName: string; skillCount: number }
   | { status: 'cancelled' }
 
+export interface ExternalSkillPreview {
+  planId: string
+  skillId: string
+  name: string
+  description: string
+  repository: string
+  path: string
+  revision: string
+  sha256: string
+  destinations: string[]
+}
+
 export interface SkillLedgerBridge {
   scan: () => Promise<InventorySnapshot>
   readSkillContent: (skillId: string, relativePath?: string) => Promise<SkillContentSnapshot>
   revealSkill: (skillId: string) => Promise<void>
+  previewExternalSkill: (url: string) => Promise<ExternalSkillPreview>
+  installExternalSkill: (planId: string) => Promise<ApplyResult>
+  deleteSkill: (skillId: string) => Promise<ApplyResult>
   checkSourceUpdates: () => Promise<SourceUpdateSnapshot>
   exportInventory: () => Promise<InventoryExportResult>
   getAppVersion: () => Promise<string>

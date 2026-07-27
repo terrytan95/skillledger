@@ -5,6 +5,7 @@ import type { SourcePin, SourceUpdateEntry, SourceUpdateSnapshot } from '../src/
 import { fingerprint } from './path-fingerprint'
 
 export type FetchSource = (input: string, init?: RequestInit) => Promise<Response>
+export type GitHubSkillSource = Omit<SourcePin, 'sha256'>
 
 interface GitTreeEntry {
   path?: unknown
@@ -25,6 +26,12 @@ const MAX_SKILL_BYTES = 10 * 1024 * 1024
 const DOWNLOAD_CONCURRENCY = 8
 const SOURCE_CHECK_CONCURRENCY = 4
 
+class GitHubResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`GitHub returned ${status}.`)
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -41,9 +48,14 @@ export function normalizeSourcePin(value: unknown): SourcePin | null {
     || repository.endsWith('.git')
     || typeof sourcePath !== 'string'
     || sourcePath.length > 1_024
-    || path.posix.isAbsolute(sourcePath)
-    || sourcePath.includes('\\')
-    || sourcePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+    || (
+      sourcePath !== ''
+      && (
+        path.posix.isAbsolute(sourcePath)
+        || sourcePath.includes('\\')
+        || sourcePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+      )
+    )
     || typeof revision !== 'string'
     || !/^[0-9a-f]{40}$/i.test(revision)
     || typeof sha256 !== 'string'
@@ -69,7 +81,7 @@ async function githubJson(fetchSource: FetchSource, url: string): Promise<Record
     redirect: 'error',
     signal: AbortSignal.timeout(15_000),
   })
-  if (!response.ok) throw new Error(`GitHub returned ${response.status}.`)
+  if (!response.ok) throw new GitHubResponseError(response.status)
   const value = await response.json() as unknown
   if (!isRecord(value)) throw new Error('GitHub returned an invalid response.')
   return value
@@ -138,15 +150,15 @@ function destinationPath(root: string, relative: string): string {
   return candidate
 }
 
-function rawSourceUrl(pin: SourcePin, relative: string): string {
-  const sourcePath = [...pin.path.split('/'), ...relative.split('/')]
+function rawSourceUrl(pin: GitHubSkillSource, relative: string): string {
+  const sourcePath = [...(pin.path ? pin.path.split('/') : []), ...relative.split('/')]
     .map((segment) => encodeURIComponent(segment))
     .join('/')
   return `https://raw.githubusercontent.com/${pin.repository}/${pin.revision}/${sourcePath}`
 }
 
 async function resolveSourceTreeSha(
-  pin: SourcePin,
+  pin: GitHubSkillSource,
   fetchSource: FetchSource,
 ): Promise<string> {
   const base = `https://api.github.com/repos/${pin.repository}`
@@ -158,7 +170,7 @@ async function resolveSourceTreeSha(
   }
 
   let treeSha = commitTree
-  for (const segment of pin.path.split('/')) {
+  for (const segment of pin.path ? pin.path.split('/') : []) {
     const entries = parseTree(await githubJson(fetchSource, `${base}/git/trees/${treeSha}`))
     const next = entries.find((entry) => entry.path === segment)
     if (next?.type !== 'tree' || next.mode !== '040000' || typeof next.sha !== 'string') {
@@ -170,7 +182,7 @@ async function resolveSourceTreeSha(
 }
 
 async function resolveSourceTree(
-  pin: SourcePin,
+  pin: GitHubSkillSource,
   fetchSource: FetchSource,
 ): Promise<GitTreeEntry[]> {
   const treeSha = await resolveSourceTreeSha(pin, fetchSource)
@@ -195,6 +207,85 @@ async function repositoryHead(
     throw new Error('GitHub default branch has no valid commit.')
   }
   return { defaultBranch, revision: commit.sha.toLowerCase() }
+}
+
+export async function resolveGitHubSkillUrl(
+  value: string,
+  fetchSource: FetchSource,
+): Promise<GitHubSkillSource> {
+  if (!value || Buffer.byteLength(value) > 2_048 || value.includes('\0')) {
+    throw new Error('GitHub skill URL is invalid.')
+  }
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('GitHub skill URL is invalid.')
+  }
+  if (
+    url.protocol !== 'https:'
+    || url.hostname.toLowerCase() !== 'github.com'
+    || url.port
+    || url.username
+    || url.password
+  ) {
+    throw new Error('Only public https://github.com skill URLs are supported.')
+  }
+
+  let segments: string[]
+  try {
+    segments = url.pathname.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment))
+  } catch {
+    throw new Error('GitHub skill URL contains invalid encoding.')
+  }
+  if (segments.some((segment) => !segment || segment.includes('/') || segment.includes('\\') || segment.includes('\0'))) {
+    throw new Error('GitHub skill URL contains an unsafe path.')
+  }
+  const repositoryName = segments[1]?.replace(/\.git$/i, '')
+  const repository = `${segments[0] ?? ''}/${repositoryName ?? ''}`
+  if (
+    !/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(repository)
+    || segments.length < 2
+  ) {
+    throw new Error('GitHub skill URL must identify a public repository.')
+  }
+
+  if (segments.length === 2) {
+    const { revision } = await repositoryHead(repository, fetchSource)
+    return { repository, path: '', revision }
+  }
+  const linkKind = segments[2]
+  if (linkKind !== 'tree' && linkKind !== 'blob') {
+    throw new Error('GitHub skill URL must point to a repository, directory, or SKILL.md file.')
+  }
+  const tail = segments.slice(3)
+  if (linkKind === 'blob') {
+    if (tail.at(-1)?.toLowerCase() !== 'skill.md') {
+      throw new Error('GitHub file URL must point to SKILL.md.')
+    }
+    tail.pop()
+  }
+  if (tail.length === 0) throw new Error('GitHub skill URL has no revision.')
+
+  for (let split = tail.length; split >= 1; split -= 1) {
+    const reference = tail.slice(0, split).join('/')
+    try {
+      const commit = await githubJson(
+        fetchSource,
+        `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(reference)}`,
+      )
+      if (typeof commit.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(commit.sha)) {
+        throw new Error('GitHub revision has no valid commit.')
+      }
+      const sourcePath = tail.slice(split).join('/')
+      if (sourcePath) safeRelativePath(sourcePath)
+      return { repository, path: sourcePath, revision: commit.sha.toLowerCase() }
+    } catch (error) {
+      if (error instanceof GitHubResponseError && (error.status === 404 || error.status === 422)) continue
+      throw error
+    }
+  }
+  throw new Error('GitHub skill revision could not be resolved.')
 }
 
 export async function discoverGitHubSourceUpdates(
@@ -262,18 +353,16 @@ export async function discoverGitHubSourceUpdates(
   }
 }
 
-export async function stageGitHubSkill(
-  pinValue: SourcePin,
+async function downloadGitHubSkill(
+  source: GitHubSkillSource,
   destination: string,
   fetchSource: FetchSource,
-): Promise<void> {
-  const pin = normalizeSourcePin(pinValue)
-  if (!pin) throw new Error('Pinned GitHub source is invalid.')
+): Promise<string> {
   if ((await fingerprint(destination)).kind !== 'missing') {
     throw new Error('Source staging path already exists.')
   }
 
-  const entries = await resolveSourceTree(pin, fetchSource)
+  const entries = await resolveSourceTree(source, fetchSource)
   const files = entries.filter((entry) => entry.type === 'blob')
   if (files.length === 0 || files.length > MAX_FILES) {
     throw new Error('Pinned skill contains an unsupported number of files.')
@@ -314,7 +403,11 @@ export async function stageGitHubSkill(
         const entry = files[nextFile++]
         const relative = safeRelativePath(entry.path)
         const sha = entry.sha as string
-        const content = await githubBytes(fetchSource, rawSourceUrl(pin, relative), entry.size as number)
+        const content = await githubBytes(
+          fetchSource,
+          rawSourceUrl(source, relative),
+          entry.size as number,
+        )
         if (createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex') !== sha) {
           throw new Error(`GitHub blob verification failed: ${relative}.`)
         }
@@ -337,9 +430,36 @@ export async function stageGitHubSkill(
     const skillFile = await stat(path.join(destination, 'SKILL.md'))
     if (!skillFile.isFile()) throw new Error('Pinned source does not contain SKILL.md.')
     const staged = await fingerprint(destination)
-    if (staged.kind !== 'directory' || staged.sha256 !== pin.sha256) {
-      throw new Error('Pinned source content hash does not match the lock.')
-    }
+    if (staged.kind !== 'directory' || !staged.sha256) throw new Error('Pinned source could not be hashed.')
+    return staged.sha256
+  } catch (error) {
+    await rm(destination, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export async function stageGitHubSkillFromUrl(
+  url: string,
+  destination: string,
+  fetchSource: FetchSource,
+): Promise<SourcePin> {
+  const source = await resolveGitHubSkillUrl(url, fetchSource)
+  return {
+    ...source,
+    sha256: await downloadGitHubSkill(source, destination, fetchSource),
+  }
+}
+
+export async function stageGitHubSkill(
+  pinValue: SourcePin,
+  destination: string,
+  fetchSource: FetchSource,
+): Promise<void> {
+  const pin = normalizeSourcePin(pinValue)
+  if (!pin) throw new Error('Pinned GitHub source is invalid.')
+  try {
+    const sha256 = await downloadGitHubSkill(pin, destination, fetchSource)
+    if (sha256 !== pin.sha256) throw new Error('Pinned source content hash does not match the lock.')
   } catch (error) {
     await rm(destination, { recursive: true, force: true })
     throw error
