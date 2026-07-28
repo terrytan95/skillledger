@@ -685,35 +685,24 @@ main { min-height: 0; overflow: hidden; }
 .font-size-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   column-gap: 28px;
   padding: 18px 20px 20px;
   border-top: 1px solid var(--line);
   font-size: 10px;
 }
-.font-size-row-heading {
-  display: contents;
-}
-.font-size-row-heading > div { grid-row: 1 / span 2; display: grid; align-content: start; gap: 4px; }
+.font-size-row-heading > div { display: grid; gap: 4px; }
 .font-size-row-heading strong { font-size: 11px; }
 .font-size-row-heading span { color: var(--muted); font-size: 9px; line-height: 1.45; }
-.font-size-row-heading output {
-  grid-column: 2;
-  justify-self: end;
-  flex: 0 0 auto;
-  color: var(--accent);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 750;
-}
 .font-size-control {
   grid-column: 2;
   position: relative;
-  margin-top: 4px;
-  padding-top: 20px;
+  width: min(100%, 280px);
+  justify-self: end;
 }
 .font-size-control input {
   width: 90%;
-  height: 28px;
+  height: 14px;
   display: block;
   margin: 0 5%;
   padding: 0;
@@ -749,10 +738,10 @@ main { min-height: 0; overflow: hidden; }
 }
 .font-size-bubble {
   position: absolute;
-  top: 0;
+  top: 7px;
   z-index: 1;
   padding: 3px 6px;
-  transform: translate(-50%, -25%);
+  transform: translate(-50%, -100%);
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 9px;
