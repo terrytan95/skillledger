@@ -121,14 +121,12 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
   background: var(--accent-hover);
 }
 .inventory-actions-menu .inventory-scan-action[aria-disabled="true"] { cursor: default; }
-.inventory-actions-menu .inventory-scan-action.scan-scanning { min-height: 62px; cursor: wait; }
+.inventory-actions-menu .inventory-scan-action.scan-scanning { cursor: wait; }
 .inventory-actions-menu .inventory-scan-action.scan-success {
-  min-height: 62px;
   color: var(--accent);
   background: var(--accent-soft);
 }
 .inventory-actions-menu .inventory-scan-action.scan-error {
-  min-height: 62px;
   color: var(--broken-ink);
   background: var(--broken-bg);
 }
