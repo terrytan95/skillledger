@@ -995,9 +995,18 @@ function LedgerView({
     >
       <aside className="library-rail">
         <nav aria-label={copy.inventoryGroups}>
-          <button title={copy.allSkills} aria-label={copy.allSkills} className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}><Boxes size={17} /></button>
-          <button title={copy.healthy} aria-label={copy.healthy} className={`rail-item ${health === 'healthy' ? 'active' : ''}`} aria-current={health === 'healthy' ? 'page' : undefined} onClick={() => onHealth('healthy')}><ShieldCheck size={17} /></button>
-          <button title={copy.needsReview} aria-label={copy.needsReview} className={`rail-item ${health === 'needs-review' ? 'active' : ''}`} aria-current={health === 'needs-review' ? 'page' : undefined} onClick={() => onHealth('needs-review')}><AlertTriangle size={17} /></button>
+          <button title={copy.allSkills} aria-label={copy.allSkills} className={`rail-item ${health === 'all' ? 'active' : ''}`} aria-current={health === 'all' ? 'page' : undefined} onClick={() => onHealth('all')}>
+            <Boxes aria-hidden="true" />
+            <span>{copy.allSkills}</span>
+          </button>
+          <button title={copy.healthy} aria-label={copy.healthy} className={`rail-item ${health === 'healthy' ? 'active' : ''}`} aria-current={health === 'healthy' ? 'page' : undefined} onClick={() => onHealth('healthy')}>
+            <ShieldCheck aria-hidden="true" />
+            <span>{copy.healthy}</span>
+          </button>
+          <button title={copy.needsReview} aria-label={copy.needsReview} className={`rail-item ${health === 'needs-review' ? 'active' : ''}`} aria-current={health === 'needs-review' ? 'page' : undefined} onClick={() => onHealth('needs-review')}>
+            <AlertTriangle aria-hidden="true" />
+            <span>{copy.needsReview}</span>
+          </button>
         </nav>
       </aside>
       <section className="skill-list" aria-label={copy.skillInventory}>
