@@ -46,6 +46,7 @@ interface StoredOperation {
   canonicalRoot: string
   canonicalBefore: PathFingerprint
   sourcePin?: SourcePin
+  sourcePinBefore?: SourcePin
   untrackedSource?: boolean
   lockContent?: string
 }
@@ -417,11 +418,17 @@ export class SkillReconciler {
       if (!validSkillId(metadata.name)) throw new Error('GitHub skill has an invalid frontmatter name.')
       const skillId = metadata.name
       const inventory = await this.scan()
-      if (inventory.skills.some((skill) => skill.id === skillId)) {
-        throw new Error(`Skill is already installed or managed: ${skillId}.`)
+      const existingSkill = inventory.skills.find((skill) => skill.id === skillId)
+      const teamPins = existingSkill ? await this.options.teamManager?.sourcePins() : undefined
+      if (teamPins?.[skillId]) {
+        throw new Error('Team-managed skills must be updated through the signed manifest.')
       }
+      const action = existingSkill ? 'update' : 'install'
+      const sourceKind = existingSkill?.agents.some((agent) => agent.id === 'universal')
+        ? 'update-canonical'
+        : 'restore-canonical'
       const approval = await this.options.teamManager?.authorize(
-        'restore-canonical',
+        sourceKind,
         skillId,
         sourcePin,
       )
@@ -429,14 +436,16 @@ export class SkillReconciler {
 
       const canonicalPath = path.join(canonicalRoot, skillId)
       const canonicalBefore = await fingerprint(canonicalPath)
-      if (canonicalBefore.kind !== 'missing') throw new Error(`Canonical skill already exists: ${skillId}.`)
+      if (!existingSkill && canonicalBefore.kind !== 'missing') {
+        throw new Error(`Canonical skill already exists: ${skillId}.`)
+      }
       const operations: PlannedOperation[] = []
       const storedOperations: StoredOperation[] = []
       const sourceOperation: PlannedOperation = {
         id: `${skillId}:universal:source`,
         skillId,
         agentId: 'universal',
-        kind: 'restore-canonical',
+        kind: sourceKind,
         targetPath: canonicalPath,
         canonicalPath,
         before: canonicalBefore,
@@ -451,42 +460,48 @@ export class SkillReconciler {
         canonicalRoot,
         canonicalBefore,
         sourcePin,
-        untrackedSource: true,
+        sourcePinBefore: existingSkill?.sourcePin ?? undefined,
+        untrackedSource: !existingSkill?.sourcePin,
       })
 
       const destinations = ['Universal']
-      for (const agent of this.options.agentLocations) {
-        const agentRoot = path.resolve(this.options.homeDir, agent.relativePath)
-        if ((await fingerprint(agentRoot)).kind !== 'directory') continue
-        const targetPath = path.join(agentRoot, skillId)
-        const before = await fingerprint(targetPath)
-        if (before.kind !== 'missing') {
-          throw new Error(`${agent.label} already has an entry named ${skillId}.`)
+      if (!existingSkill) {
+        for (const agent of this.options.agentLocations) {
+          const agentRoot = path.resolve(this.options.homeDir, agent.relativePath)
+          if ((await fingerprint(agentRoot)).kind !== 'directory') continue
+          const targetPath = path.join(agentRoot, skillId)
+          const before = await fingerprint(targetPath)
+          if (before.kind !== 'missing') {
+            throw new Error(`${agent.label} already has an entry named ${skillId}.`)
+          }
+          const operation: PlannedOperation = {
+            id: `${skillId}:${agent.id}`,
+            skillId,
+            agentId: agent.id,
+            kind: 'create-symlink',
+            targetPath,
+            canonicalPath,
+            before,
+            after: { kind: 'symlink', sha256: sourcePin.sha256, linkTarget: canonicalPath },
+          }
+          operations.push(operation)
+          storedOperations.push({
+            public: operation,
+            rootKind: 'agent',
+            agentRoot,
+            canonicalRoot,
+            canonicalBefore: sourceOperation.after,
+          })
+          destinations.push(agent.label)
         }
-        const operation: PlannedOperation = {
-          id: `${skillId}:${agent.id}`,
-          skillId,
-          agentId: agent.id,
-          kind: 'create-symlink',
-          targetPath,
-          canonicalPath,
-          before,
-          after: { kind: 'symlink', sha256: sourcePin.sha256, linkTarget: canonicalPath },
-        }
-        operations.push(operation)
-        storedOperations.push({
-          public: operation,
-          rootKind: 'agent',
-          agentRoot,
-          canonicalRoot,
-          canonicalBefore: sourceOperation.after,
-        })
-        destinations.push(agent.label)
       }
 
       const lock = await readSkillLock(this.options.homeDir)
       const skills = isRecord(lock.skills) ? lock.skills : {}
-      if (skills[skillId] !== undefined) throw new Error(`Global skill lock already tracks ${skillId}.`)
+      if (!existingSkill && skills[skillId] !== undefined) {
+        throw new Error(`Global skill lock already tracks ${skillId}.`)
+      }
+      const existingLockEntry = isRecord(skills[skillId]) ? skills[skillId] : {}
       const now = new Date().toISOString()
       const lockContent = serializeSkillLock({
         ...lock,
@@ -494,11 +509,14 @@ export class SkillReconciler {
         skills: {
           ...skills,
           [skillId]: {
+            ...existingLockEntry,
             source: sourcePin.repository,
             sourceType: 'github',
             sourceUrl: `https://github.com/${sourcePin.repository}.git`,
             skillPath: `${sourcePin.path ? `${sourcePin.path}/` : ''}SKILL.md`,
-            installedAt: now,
+            installedAt: typeof existingLockEntry.installedAt === 'string'
+              ? existingLockEntry.installedAt
+              : now,
             updatedAt: now,
             ...sourcePin,
           },
@@ -542,8 +560,8 @@ export class SkillReconciler {
           createLinks: destinations.length - 1,
           repairLinks: 0,
           replaceCopies: 0,
-          restoreCanonical: 1,
-          updateCanonical: 0,
+          restoreCanonical: sourceKind === 'restore-canonical' ? 1 : 0,
+          updateCanonical: sourceKind === 'update-canonical' ? 1 : 0,
           unchanged: 0,
           blocked: 0,
         },
@@ -556,6 +574,7 @@ export class SkillReconciler {
         expiresAt: Date.now() + TRANSIENT_TTL_MS,
       })
       return {
+        action,
         planId,
         skillId,
         name: metadata.name,
@@ -1453,12 +1472,13 @@ export class SkillReconciler {
       const currentPin = (await this.scan()).skills.find(
         (skill) => skill.id === operation.public.skillId,
       )?.sourcePin
+      const expectedPin = operation.sourcePinBefore ?? operation.sourcePin
       if (
         !operation.sourcePin
         || (
           operation.untrackedSource
             ? currentPin !== undefined
-            : JSON.stringify(currentPin) !== JSON.stringify(operation.sourcePin)
+            : JSON.stringify(currentPin) !== JSON.stringify(expectedPin)
         )
       ) {
         throw new StalePlanError(`The pinned source changed after preview for ${operation.public.skillId}.`)
