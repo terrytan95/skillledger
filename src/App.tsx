@@ -130,7 +130,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
 }
 
-export function clampSplitRatio(value: number, minimum = 0.25, maximum = 0.65): number {
+export function clampSplitRatio(value: number, minimum = 0.18, maximum = 0.65): number {
   return clamp(value, minimum, maximum)
 }
 
@@ -450,7 +450,7 @@ function LedgerView({
     if (!container || !rail || !separator) return null
 
     const bounds = container.getBoundingClientRect()
-    const minimum = Math.max(0.25, 250 / bounds.width)
+    const minimum = Math.max(0.18, 200 / bounds.width)
     const maximum = Math.max(
       minimum,
       Math.min(0.65, (bounds.width - rail.offsetWidth - separator.offsetWidth - 360) / bounds.width),
@@ -529,7 +529,7 @@ function LedgerView({
         className="ledger-separator"
         label={copy.resizePanels}
         value={splitRatio * 100}
-        minimum={25}
+        minimum={18}
         maximum={65}
         onResize={resize}
         onStep={(direction) => {
