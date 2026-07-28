@@ -17,6 +17,7 @@ import {
   ArrowRight,
   BookOpen,
   Boxes,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -54,6 +55,7 @@ import { MarkdownDocument, markdownHeadings } from './markdown'
 type HealthFilter = SkillHealth | 'all' | 'needs-review'
 type ContentMode = 'rendered' | 'source'
 type WorkbenchTab = 'overview' | 'content' | 'files'
+type ScanPhase = 'idle' | 'scanning' | 'success' | 'error'
 type UpdatePhase = 'idle' | 'checking' | 'success' | 'error'
 
 const ledgerSplitKey = 'skillledger:ledger-split'
@@ -119,6 +121,8 @@ type InventoryWorkspaceContext = {
   selected: SkillRecord | undefined
   setSelectedId: (id: string) => void
   loading: boolean
+  scanPhase: ScanPhase
+  setScanPhase: (phase: ScanPhase) => void
   scanError: string
   liveMode: boolean
   readerOpen: boolean
@@ -137,7 +141,7 @@ type InventoryWorkspaceContext = {
   exportPhase: 'idle' | 'working'
   inventoryMessage: string
   searchInput: React.RefObject<HTMLInputElement | null>
-  refresh: () => Promise<void>
+  refresh: (showStatus?: boolean) => Promise<void>
   checkSourceUpdates: () => Promise<void>
   exportInventory: () => Promise<void>
   externalSkillOpen: boolean
@@ -166,6 +170,7 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
     const [health, setHealth] = useState<HealthFilter>('all')
     const [selectedId, setSelectedId] = useState(snapshot.skills[0]?.id ?? '')
     const [loading, setLoading] = useState(false)
+    const [scanPhase, setScanPhase] = useState<ScanPhase>('idle')
     const [scanError, setScanError] = useState('')
     const [planOpen, setPlanOpen] = useState(false)
     const [externalSkillOpen, setExternalSkillOpen] = useState(false)
@@ -188,10 +193,11 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
       setSelectedId((current) => resolveInventorySelection(next, current, preferredId))
     }, [onSnapshot])
 
-    const refresh = useCallback(async () => {
+    const refresh = useCallback(async (showStatus = false) => {
       if (!window.skillLedger) return
       setLoading(true)
       setScanError('')
+      if (showStatus) setScanPhase('scanning')
       try {
         const next = await window.skillLedger.scan()
         acceptSnapshot(next)
@@ -199,8 +205,10 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
         setSourceCheckPhase('idle')
         setInventoryMessage('')
         setLiveMode(true)
+        if (showStatus) setScanPhase('success')
       } catch (error) {
         setScanError((error as Error).message)
+        if (showStatus) setScanPhase('error')
       } finally {
         setLoading(false)
       }
@@ -373,6 +381,8 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
         selected,
         setSelectedId,
         loading,
+        scanPhase,
+        setScanPhase,
         scanError,
         liveMode,
         readerOpen,
@@ -418,6 +428,8 @@ export function InventoryHeaderActions() {
     sourceCheckPhase,
     exportPhase,
     loading,
+    scanPhase,
+    setScanPhase,
   } = workspace
 
   return (
@@ -426,6 +438,9 @@ export function InventoryHeaderActions() {
       <span className="header-status" aria-live="polite">{inventoryMessage}</span>
       <details
         className="inventory-actions"
+        onToggle={(event) => {
+          if (!event.currentTarget.open && scanPhase === 'success') setScanPhase('idle')
+        }}
         onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.removeAttribute('open')
         }}
@@ -497,14 +512,44 @@ export function InventoryHeaderActions() {
           <div className="inventory-action-divider" aria-hidden="true" />
           <button
             type="button"
-            className="inventory-scan-action"
-            disabled={!window.skillLedger || loading}
-            onClick={(event) => {
-              event.currentTarget.closest('details')?.removeAttribute('open')
-              void workspace.refresh()
+            className={`inventory-scan-action scan-${loading ? 'scanning' : scanPhase}`}
+            disabled={!window.skillLedger}
+            aria-busy={loading}
+            aria-disabled={loading || scanPhase === 'success'}
+            onClick={() => {
+              if (loading || scanPhase === 'success') return
+              void workspace.refresh(true)
             }}
           >
-            <RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />{loading ? copy.scanning : copy.scanNow}
+            {loading ? (
+              <>
+                <RefreshCw size={18} className="spin" aria-hidden="true" />
+                <span className="inventory-scan-copy" role="status" aria-live="polite" aria-atomic="true">
+                  <strong>{copy.scanning}</strong>
+                  <small>{copy.scanningLocations}</small>
+                </span>
+              </>
+            ) : scanPhase === 'success' ? (
+              <>
+                <Check size={18} aria-hidden="true" />
+                <span className="inventory-scan-copy" role="status" aria-live="polite">
+                  <strong>{copy.scanComplete}</strong>
+                </span>
+              </>
+            ) : scanPhase === 'error' ? (
+              <>
+                <AlertTriangle size={18} aria-hidden="true" />
+                <span className="inventory-scan-copy">
+                  <strong>{copy.scanFailed}</strong>
+                  <small>{copy.retryScan}</small>
+                </span>
+              </>
+            ) : (
+              <>
+                <RefreshCw size={15} aria-hidden="true" />
+                {copy.scanNow}
+              </>
+            )}
           </button>
         </div>
       </details>
