@@ -1704,7 +1704,13 @@ export default function App() {
                 <strong>{copy.inventoryActions}</strong>
                 <ChevronDown size={14} aria-hidden="true" />
               </summary>
-              <div className="inventory-actions-menu" aria-label={copy.inventoryActions}>
+              <div
+                className="inventory-actions-menu"
+                aria-label={copy.inventoryActions}
+                onMouseDown={(event) => {
+                  if (!(event.target as Element).closest('button')) event.preventDefault()
+                }}
+              >
                 {!readerOpen && (
                   <>
                     <p>{copy.inventoryActionSkills}</p>
