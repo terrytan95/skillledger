@@ -1159,7 +1159,6 @@ function SettingsView({
 }) {
   const updatePhase = updateStatus?.phase ?? 'idle'
   const downloadLabel = `${copy.downloadingUpdate}${updateStatus?.downloadPercent == null ? '' : ` ${Math.round(updateStatus.downloadPercent)}%`}`
-  const [fontSizeBefore, setFontSizeBefore] = useState<FontSize>(preferences.fontSize)
   const [fontSizeDragging, setFontSizeDragging] = useState(false)
   const fontSizeInput = useRef<HTMLInputElement>(null)
   const fontSizeProgress = (preferences.fontSize - fontSizes[0]) / (fontSizes.at(-1)! - fontSizes[0]) * 100
@@ -1304,18 +1303,10 @@ function SettingsView({
                 aria-describedby="font-size-description"
                 aria-valuetext={`${preferences.fontSize} ${copy.fontSizePixels}${preferences.fontSize === 10 ? `, ${copy.fontDefault}` : ''}`}
                 onChange={(event) => onPreference('fontSize', Number(event.target.value) as FontSize)}
-                onPointerDown={() => {
-                  setFontSizeBefore(preferences.fontSize)
-                  setFontSizeDragging(true)
-                }}
+                onPointerDown={() => setFontSizeDragging(true)}
                 onPointerUp={() => setFontSizeDragging(false)}
                 onPointerCancel={() => setFontSizeDragging(false)}
                 onBlur={() => setFontSizeDragging(false)}
-                onKeyDown={(event) => {
-                  if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp'].includes(event.key)) {
-                    setFontSizeBefore(preferences.fontSize)
-                  }
-                }}
               />
               <div className="font-size-ticks" aria-hidden="true">
                 {fontSizes.map((size) => (
@@ -1324,7 +1315,6 @@ function SettingsView({
                     key={size}
                     onPointerDown={(event) => {
                       event.preventDefault()
-                      setFontSizeBefore(preferences.fontSize)
                       onPreference('fontSize', size)
                       fontSizeInput.current?.focus()
                     }}
@@ -1332,22 +1322,6 @@ function SettingsView({
                     {size}
                   </span>
                 ))}
-              </div>
-            </div>
-            <div className="font-size-preview">
-              <div className="font-size-preview-card" style={{ '--preview-font-size': `${fontSizeBefore}px` } as CSSProperties}>
-                <span>{copy.fontSizeBefore} · {fontSizeBefore} px</span>
-                <div className="font-size-preview-copy">
-                  <p>{copy.fontSizeSampleTitle}</p>
-                  <small>{copy.fontSizeSampleBody}</small>
-                </div>
-              </div>
-              <div className="font-size-preview-card active" style={{ '--preview-font-size': `${preferences.fontSize}px` } as CSSProperties}>
-                <span>{copy.fontSizeLivePreview} · {preferences.fontSize} px</span>
-                <div className="font-size-preview-copy">
-                  <p>{copy.fontSizeSampleTitle}</p>
-                  <small>{copy.fontSizeSampleBody}</small>
-                </div>
               </div>
             </div>
           </div>

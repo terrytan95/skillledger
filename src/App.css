@@ -683,20 +683,22 @@ main { min-height: 0; overflow: hidden; }
   font-size: 1rem;
 }
 .font-size-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
   padding: 18px 20px 20px;
   border-top: 1px solid var(--line);
   font-size: 10px;
 }
 .font-size-row-heading {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 20px;
+  display: contents;
 }
-.font-size-row-heading > div { display: grid; gap: 4px; }
+.font-size-row-heading > div { grid-row: 1 / span 2; display: grid; align-content: start; gap: 4px; }
 .font-size-row-heading strong { font-size: 11px; }
 .font-size-row-heading span { color: var(--muted); font-size: 9px; line-height: 1.45; }
 .font-size-row-heading output {
+  grid-column: 2;
+  justify-self: end;
   flex: 0 0 auto;
   color: var(--accent);
   font-size: 10px;
@@ -704,8 +706,9 @@ main { min-height: 0; overflow: hidden; }
   font-weight: 750;
 }
 .font-size-control {
+  grid-column: 2;
   position: relative;
-  margin-top: 14px;
+  margin-top: 4px;
   padding-top: 20px;
 }
 .font-size-control input {
@@ -786,35 +789,6 @@ main { min-height: 0; overflow: hidden; }
 }
 .font-size-ticks span.selected { color: var(--accent); font-weight: 800; }
 .font-size-ticks span.selected::before { background: var(--accent); }
-.font-size-preview {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 16px;
-}
-.font-size-preview-card {
-  min-width: 0;
-  min-height: 86px;
-  padding: 10px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  background: var(--surface-raised);
-}
-.font-size-preview-card.active { border-color: var(--accent); background: var(--accent-soft); }
-.font-size-preview-card > span {
-  display: block;
-  color: var(--muted);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-.font-size-preview-copy {
-  margin-top: 9px;
-  font-size: var(--preview-font-size);
-  line-height: 1.3;
-}
-.font-size-preview-copy p { margin: 0; font-size: 1em; font-weight: 700; }
-.font-size-preview-copy small { display: block; margin-top: 4px; color: var(--muted); font-size: .72em; line-height: 1.4; }
 .segmented-control { display: flex; padding: 3px; border: 1px solid var(--line); background: var(--code-bg); }
 .segmented-control button {
   min-height: 29px;
@@ -957,7 +931,6 @@ main { min-height: 0; overflow: hidden; }
 @media (max-width: 520px) {
   .inventory-actions summary { width: 48px; justify-content: center; padding: 0 7px; }
   .inventory-actions summary strong { display: none; }
-  .font-size-preview { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
