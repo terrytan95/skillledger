@@ -112,6 +112,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
 .inventory-actions-menu .inventory-scan-action {
   position: relative;
   overflow: hidden;
+  height: 42px;
   justify-content: flex-start;
   color: var(--accent-ink);
   background: var(--accent);
@@ -134,8 +135,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
   background: color-mix(in srgb, var(--broken-ink) 12%, var(--broken-bg));
 }
 .inventory-scan-copy { min-width: 0; display: grid; gap: 2px; }
-.inventory-scan-copy strong { font: inherit; }
-.inventory-scan-copy small { font-size: 0.78rem; font-weight: 500; opacity: .82; }
+.inventory-scan-copy strong { font: inherit; line-height: 1; }
+.inventory-scan-copy small { font-size: 0.78rem; font-weight: 500; line-height: 1; opacity: .82; }
 .inventory-actions-menu .inventory-scan-action.scan-scanning::after {
   content: "";
   position: absolute;
