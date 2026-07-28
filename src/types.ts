@@ -238,6 +238,7 @@ export type InventoryExportResult =
   | { status: 'cancelled' }
 
 export interface ExternalSkillPreview {
+  action: 'install' | 'update'
   planId: string
   skillId: string
   name: string

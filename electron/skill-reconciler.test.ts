@@ -499,17 +499,13 @@ describe('SkillReconciler', () => {
     expect(JSON.parse(await readFile(lockPath, 'utf8')).skills['review-code']).toBeDefined()
   })
 
-  it('parses and installs an external GitHub skill with an exact source lock', async () => {
+  it('installs and safely updates a skill from an external GitHub link', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'skillledger-reconcile-'))
     temporaryHomes.push(home)
     const codexRoot = path.join(home, '.codex', 'skills')
     await mkdir(codexRoot, { recursive: true })
-    const content = Buffer.from('---\nname: review-code\ndescription: Review safely.\n---\n')
-    const revision = '1'.repeat(40)
-    const blobSha = createHash('sha1')
-      .update(`blob ${content.length}\0`)
-      .update(content)
-      .digest('hex')
+    let content = Buffer.from('---\nname: review-code\ndescription: Review safely.\n---\n')
+    let revision = '1'.repeat(40)
     const json = (value: object, status = 200) => new Response(JSON.stringify(value), {
       status,
       headers: { 'Content-Type': 'application/json' },
@@ -526,6 +522,10 @@ describe('SkillReconciler', () => {
         return json({ tree: [{ path: 'review-code', mode: '040000', type: 'tree', sha: 'c'.repeat(40) }] })
       }
       if (input.endsWith(`/git/trees/${'c'.repeat(40)}?recursive=1`)) {
+        const blobSha = createHash('sha1')
+          .update(`blob ${content.length}\0`)
+          .update(content)
+          .digest('hex')
         return json({
           truncated: false,
           tree: [{ path: 'SKILL.md', mode: '100644', type: 'blob', size: content.length, sha: blobSha }],
@@ -565,6 +565,35 @@ describe('SkillReconciler', () => {
       revision,
       sha256: preview.sha256,
     })
+
+    content = Buffer.from('---\nname: review-code\ndescription: Updated safely.\n---\n')
+    revision = '2'.repeat(40)
+    const update = await reconciler.previewExternalSkill(
+      'https://github.com/example/skills/tree/main/skills/review-code',
+    )
+    const updated = await reconciler.apply(update.planId)
+    if (updated.status !== 'applied') throw new Error(`Expected update, received ${JSON.stringify(updated)}`)
+
+    expect(update).toMatchObject({
+      action: 'update',
+      skillId: 'review-code',
+      revision,
+      destinations: ['Universal'],
+    })
+    expect(await readFile(path.join(home, '.agents', 'skills', 'review-code', 'SKILL.md'), 'utf8'))
+      .toContain('Updated safely.')
+    const updatedLock = JSON.parse(await readFile(path.join(home, '.agents', '.skill-lock.json'), 'utf8'))
+    expect(updatedLock.skills['review-code']).toMatchObject({
+      repository: 'example/skills',
+      path: 'skills/review-code',
+      revision,
+      sha256: update.sha256,
+    })
+    expect((await reconciler.rollback(updated.journalId)).status).toBe('rolled-back')
+    expect(await readFile(path.join(home, '.agents', 'skills', 'review-code', 'SKILL.md'), 'utf8'))
+      .toContain('Review safely.')
+    const restoredLock = JSON.parse(await readFile(path.join(home, '.agents', '.skill-lock.json'), 'utf8'))
+    expect(restoredLock.skills['review-code'].revision).toBe('1'.repeat(40))
   })
 
   it('restores a missing canonical skill from an exact GitHub pin before linking it', async () => {

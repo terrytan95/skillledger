@@ -873,11 +873,15 @@ function TeamView({ copy }: { copy: Messages }) {
 function ExternalSkillPanel({
   copy,
   onClose,
-  onInstalled,
+  onApplied,
 }: {
   copy: Messages
   onClose: () => void
-  onInstalled: (snapshot: InventorySnapshot, skillId: string) => void
+  onApplied: (
+    snapshot: InventorySnapshot,
+    skillId: string,
+    action: ExternalSkillPreview['action'],
+  ) => void
 }) {
   const [url, setUrl] = useState('')
   const [preview, setPreview] = useState<ExternalSkillPreview | null>(null)
@@ -892,7 +896,8 @@ function ExternalSkillPanel({
     try {
       setPreview(await window.skillLedger.previewExternalSkill(url.trim()))
     } catch (error) {
-      setMessage((error as Error).message)
+      const reason = (error as Error).message
+      setMessage(reason.toLowerCase().includes('timed out') ? copy.githubSkillTimeout : reason)
     } finally {
       setWorking(false)
     }
@@ -905,7 +910,7 @@ function ExternalSkillPanel({
     try {
       const result = await window.skillLedger.installExternalSkill(preview.planId)
       if (result.status === 'applied' || result.status === 'already-applied') {
-        onInstalled(result.snapshot, preview.skillId)
+        onApplied(result.snapshot, preview.skillId, preview.action)
       } else {
         setMessage(result.error.message)
       }
@@ -915,6 +920,7 @@ function ExternalSkillPanel({
       setWorking(false)
     }
   }
+  const updating = preview?.action === 'update'
 
   return (
     <div className="plan-backdrop" role="presentation" onMouseDown={onClose}>
@@ -945,13 +951,13 @@ function ExternalSkillPanel({
             </button>
           </form>
           {preview && (
-            <section className="external-skill-preview" aria-label={copy.skillReady}>
-              <div><p className="eyebrow">{copy.skillReady}</p><h3>{preview.name}</h3><p>{preview.description}</p></div>
+            <section className="external-skill-preview" aria-label={updating ? copy.skillReadyToUpdate : copy.skillReady}>
+              <div><p className="eyebrow">{updating ? copy.skillReadyToUpdate : copy.skillReady}</p><h3>{preview.name}</h3><p>{preview.description}</p></div>
               <dl>
                 <div><dt>{copy.source}</dt><dd>{preview.repository}</dd></div>
                 <div><dt>{copy.sourcePath}</dt><dd><code>{preview.path || '/'}</code></dd></div>
                 <div><dt>{copy.pinnedCommit}</dt><dd><code>{preview.revision.slice(0, 12)}</code></dd></div>
-                <div><dt>{copy.installDestinations}</dt><dd>{preview.destinations.join(' · ')}</dd></div>
+                <div><dt>{updating ? copy.updateDestinations : copy.installDestinations}</dt><dd>{preview.destinations.join(' · ')}</dd></div>
               </dl>
             </section>
           )}
@@ -960,7 +966,10 @@ function ExternalSkillPanel({
         <div className="plan-actions">
           <button className="secondary-button" onClick={onClose}>{copy.cancel}</button>
           <button className="primary-button" onClick={() => void install()} disabled={!preview || working}>
-            <Plus size={14} aria-hidden="true" />{working && preview ? copy.installingSkill : copy.installSkill}
+            {updating ? <RefreshCw size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+            {working && preview
+              ? updating ? copy.updatingSkill : copy.installingSkill
+              : updating ? copy.updateSkill : copy.installSkill}
           </button>
         </div>
       </aside>
@@ -1868,11 +1877,11 @@ export default function App() {
         <ExternalSkillPanel
           copy={copy}
           onClose={() => setExternalSkillOpen(false)}
-          onInstalled={(next, skillId) => {
+          onApplied={(next, skillId, action) => {
             setSnapshot(next)
             setSelectedId(skillId)
             setSourceUpdates(null)
-            setInventoryMessage(`${copy.installedSkill}: ${skillId}`)
+            setInventoryMessage(`${action === 'update' ? copy.updatedSkill : copy.installedSkill}: ${skillId}`)
             setExternalSkillOpen(false)
           }}
         />
