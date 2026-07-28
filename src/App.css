@@ -72,6 +72,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, .upload-button:
 .inventory-actions summary:hover { border-color: var(--muted); }
 .inventory-actions summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inventory-actions-menu {
+  -webkit-app-region: no-drag;
   position: absolute;
   top: calc(100% + 14px);
   right: 0;
