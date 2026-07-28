@@ -688,7 +688,7 @@ main { min-height: 0; overflow: hidden; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   column-gap: 28px;
-  padding: 18px 20px 20px;
+  padding: 22px 20px 20px;
   border-top: 1px solid var(--line);
   font-size: 10px;
 }
@@ -746,7 +746,7 @@ main { min-height: 0; overflow: hidden; }
 .font-size-control input:focus-visible { outline: 0; }
 .font-size-bubble {
   position: absolute;
-  top: 7px;
+  top: -6px;
   z-index: 2;
   padding: 3px 6px;
   transform: translate(-50%, -100%);
