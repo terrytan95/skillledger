@@ -249,31 +249,3 @@ export interface ExternalSkillPreview {
   sha256: string
   destinations: string[]
 }
-
-export interface SkillLedgerBridge {
-  scan: () => Promise<InventorySnapshot>
-  readSkillContent: (skillId: string, relativePath?: string) => Promise<SkillContentSnapshot>
-  revealSkill: (skillId: string) => Promise<void>
-  previewExternalSkill: (url: string) => Promise<ExternalSkillPreview>
-  installExternalSkill: (planId: string) => Promise<ApplyResult>
-  deleteSkill: (skillId: string) => Promise<ApplyResult>
-  checkSourceUpdates: () => Promise<SourceUpdateSnapshot>
-  exportInventory: () => Promise<InventoryExportResult>
-  getAppVersion: () => Promise<string>
-  checkForUpdates: () => Promise<AppUpdateStatus>
-  onUpdateState: (listener: (status: AppUpdateStatus) => void) => () => void
-  installUpdate: () => Promise<void>
-  openUpdatesPage: () => Promise<void>
-  reconcile: {
-    preview: (request?: ReconcileRequest) => Promise<ReconciliationPreview>
-    apply: (planId: string) => Promise<ApplyResult>
-    rollback: (journalId: string) => Promise<RollbackResult>
-    activity: () => Promise<ActivitySnapshot>
-    discard: (journalId: string) => Promise<DiscardResult>
-  }
-  team: {
-    status: () => Promise<TeamStatus>
-    importPolicy: (json: string) => Promise<TeamImportResult>
-    importManifest: (json: string) => Promise<TeamImportResult>
-  }
-}
