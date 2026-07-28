@@ -10,35 +10,19 @@ import { serializeInventoryExport } from './inventory-export'
 import { SkillReconciler } from './skill-reconciler'
 import { discoverGitHubSourceUpdates } from './skill-source'
 import { TeamManager } from './team-policy'
+import {
+  ipcChannels,
+  ipcEventChannels,
+  type IpcOperation,
+  type IpcResult,
+  type IpcUnknownArgs,
+} from './ipc-contract'
 import type { AppUpdateStatus, ReconcileRequest } from '../src/types'
 
 const appRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const devServerUrl = process.env['VITE_DEV_SERVER_URL']
 const rendererDist = path.join(appRoot, 'dist')
 const preloadPath = path.join(appRoot, 'dist-electron', 'preload.mjs')
-const channels = {
-  scan: 'skillledger:scan',
-  readSkillContent: 'skillledger:skill:read-content',
-  revealSkill: 'skillledger:skill:reveal',
-  previewExternalSkill: 'skillledger:external:preview',
-  installExternalSkill: 'skillledger:external:install',
-  deleteSkill: 'skillledger:skill:delete',
-  checkSourceUpdates: 'skillledger:source:check-updates',
-  exportInventory: 'skillledger:inventory:export',
-  preview: 'skillledger:reconcile:preview',
-  apply: 'skillledger:reconcile:apply',
-  rollback: 'skillledger:reconcile:rollback',
-  activity: 'skillledger:reconcile:activity',
-  discard: 'skillledger:reconcile:discard',
-  teamStatus: 'skillledger:team:status',
-  importPolicy: 'skillledger:team:import-policy',
-  importManifest: 'skillledger:team:import-manifest',
-  appVersion: 'skillledger:get-app-version',
-  checkUpdates: 'skillledger:check-for-updates',
-  updateState: 'skillledger:update-state',
-  installUpdate: 'skillledger:install-update',
-  openUpdatesPage: 'skillledger:open-updates-page',
-} as const
 const updatesPage = 'https://github.com/terrytan95/skillledger/releases/latest'
 let updateStatus: AppUpdateStatus = {
   currentVersion: app.getVersion(),
@@ -59,7 +43,7 @@ const reconciler = new SkillReconciler({
 function publishUpdateStatus(status: AppUpdateStatus): void {
   updateStatus = status
   for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send(channels.updateState, status)
+    window.webContents.send(ipcEventChannels.updateState, status)
   }
 }
 
@@ -141,43 +125,39 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-function registerIpc(): void {
-  ipcMain.handle(channels.scan, async (event) => {
+function handleIpc<Operation extends IpcOperation>(
+  operation: Operation,
+  handler: (
+    ...args: IpcUnknownArgs<Operation>
+  ) => IpcResult<Operation> | Promise<IpcResult<Operation>>,
+): void {
+  ipcMain.handle(ipcChannels[operation], async (event, ...args: unknown[]) => {
     assertTrustedSender(event)
-    return reconciler.scan()
+    return handler(...args as IpcUnknownArgs<Operation>)
   })
-  ipcMain.handle(channels.readSkillContent, async (event, value: unknown) => {
-    assertTrustedSender(event)
+}
+
+function registerIpc(): void {
+  handleIpc('scan', () => reconciler.scan())
+  handleIpc('readSkillContent', async (value) => {
     const request = parseSkillContentRequest(value)
     return readSkillContent(homeDir, request.skillId, request.relativePath)
   })
-  ipcMain.handle(channels.revealSkill, async (event, value: unknown) => {
-    assertTrustedSender(event)
+  handleIpc('revealSkill', (value) => {
     const skillId = parseSkillId(value)
     shell.showItemInFolder(path.join(homeDir, '.agents', 'skills', skillId, 'SKILL.md'))
   })
-  ipcMain.handle(channels.previewExternalSkill, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.previewExternalSkill(parseExternalSkillUrl(value))
-  })
-  ipcMain.handle(channels.installExternalSkill, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.apply(parseOpaqueId(value))
-  })
-  ipcMain.handle(channels.deleteSkill, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.deleteSkill(parseSkillId(value))
-  })
-  ipcMain.handle(channels.checkSourceUpdates, async (event) => {
-    assertTrustedSender(event)
+  handleIpc('previewExternalSkill', (value) => reconciler.previewExternalSkill(parseExternalSkillUrl(value)))
+  handleIpc('installExternalSkill', (value) => reconciler.apply(parseOpaqueId(value)))
+  handleIpc('deleteSkill', (value) => reconciler.deleteSkill(parseSkillId(value)))
+  handleIpc('checkSourceUpdates', async () => {
     const snapshot = await reconciler.scan()
     const pins = Object.fromEntries(
       snapshot.skills.flatMap((skill) => skill.sourcePin ? [[skill.id, skill.sourcePin]] : []),
     )
     return discoverGitHubSourceUpdates(pins, net.fetch)
   })
-  ipcMain.handle(channels.exportInventory, async (event) => {
-    assertTrustedSender(event)
+  handleIpc('exportInventory', async () => {
     const choice = await dialog.showSaveDialog({
       title: 'Export reproducible inventory',
       defaultPath: 'skillledger-inventory.json',
@@ -188,55 +168,21 @@ function registerIpc(): void {
     await writeFile(choice.filePath, serializeInventoryExport(snapshot), { encoding: 'utf8', mode: 0o600 })
     return { status: 'exported', fileName: path.basename(choice.filePath), skillCount: snapshot.skills.length }
   })
-  ipcMain.handle(channels.preview, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.preview(parseReconcileRequest(value))
-  })
-  ipcMain.handle(channels.apply, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.apply(parseOpaqueId(value))
-  })
-  ipcMain.handle(channels.rollback, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.rollback(parseOpaqueId(value))
-  })
-  ipcMain.handle(channels.activity, async (event) => {
-    assertTrustedSender(event)
-    return reconciler.activity()
-  })
-  ipcMain.handle(channels.discard, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return reconciler.discard(parseOpaqueId(value))
-  })
-  ipcMain.handle(channels.teamStatus, async (event) => {
-    assertTrustedSender(event)
-    return teamManager.status()
-  })
-  ipcMain.handle(channels.importPolicy, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return teamManager.importPolicy(parseTeamDocument(value))
-  })
-  ipcMain.handle(channels.importManifest, async (event, value: unknown) => {
-    assertTrustedSender(event)
-    return teamManager.importManifest(parseTeamDocument(value))
-  })
-  ipcMain.handle(channels.appVersion, (event) => {
-    assertTrustedSender(event)
-    return app.getVersion()
-  })
-  ipcMain.handle(channels.checkUpdates, async (event) => {
-    assertTrustedSender(event)
-    return checkAppUpdates()
-  })
-  ipcMain.handle(channels.installUpdate, (event) => {
-    assertTrustedSender(event)
+  handleIpc('reconcilePreview', (value) => reconciler.preview(parseReconcileRequest(value)))
+  handleIpc('reconcileApply', (value) => reconciler.apply(parseOpaqueId(value)))
+  handleIpc('reconcileRollback', (value) => reconciler.rollback(parseOpaqueId(value)))
+  handleIpc('reconcileActivity', () => reconciler.activity())
+  handleIpc('reconcileDiscard', (value) => reconciler.discard(parseOpaqueId(value)))
+  handleIpc('teamStatus', () => teamManager.status())
+  handleIpc('teamImportPolicy', (value) => teamManager.importPolicy(parseTeamDocument(value)))
+  handleIpc('teamImportManifest', (value) => teamManager.importManifest(parseTeamDocument(value)))
+  handleIpc('appVersion', () => app.getVersion())
+  handleIpc('checkUpdates', () => checkAppUpdates())
+  handleIpc('installUpdate', () => {
     if (updateStatus.phase !== 'downloaded') throw new Error('No downloaded update is ready to install')
     setImmediate(() => autoUpdater.quitAndInstall())
   })
-  ipcMain.handle(channels.openUpdatesPage, async (event) => {
-    assertTrustedSender(event)
-    await shell.openExternal(updatesPage)
-  })
+  handleIpc('openUpdatesPage', () => shell.openExternal(updatesPage))
 }
 
 function parseOpaqueId(value: unknown): string {

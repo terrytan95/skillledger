@@ -1,90 +1,50 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type {
-  ActivitySnapshot,
-  AppUpdateStatus,
-  ApplyResult,
-  DiscardResult,
-  ExternalSkillPreview,
-  InventoryExportResult,
-  InventorySnapshot,
-  ReconcileRequest,
-  ReconciliationPreview,
-  RollbackResult,
-  SkillContentSnapshot,
-  SkillLedgerBridge,
-  SourceUpdateSnapshot,
-  TeamImportResult,
-  TeamStatus,
-} from '../src/types'
+import {
+  ipcChannels,
+  ipcEventChannels,
+  type IpcArgs,
+  type IpcOperation,
+  type IpcResult,
+  type SkillLedgerBridge,
+} from './ipc-contract'
+import type { AppUpdateStatus } from '../src/types'
+
+function invoke<Operation extends IpcOperation>(
+  operation: Operation,
+  ...args: IpcArgs<Operation>
+): Promise<IpcResult<Operation>> {
+  return ipcRenderer.invoke(ipcChannels[operation], ...args) as Promise<IpcResult<Operation>>
+}
 
 const bridge: SkillLedgerBridge = {
-  scan: () => ipcRenderer.invoke('skillledger:scan') as Promise<InventorySnapshot>,
-  readSkillContent: (skillId: string, relativePath?: string) => ipcRenderer.invoke(
-    'skillledger:skill:read-content',
-    { skillId, relativePath },
-  ) as Promise<SkillContentSnapshot>,
-  revealSkill: (skillId: string) => ipcRenderer.invoke(
-    'skillledger:skill:reveal',
-    skillId,
-  ) as Promise<void>,
-  previewExternalSkill: (url: string) => ipcRenderer.invoke(
-    'skillledger:external:preview',
-    url,
-  ) as Promise<ExternalSkillPreview>,
-  installExternalSkill: (planId: string) => ipcRenderer.invoke(
-    'skillledger:external:install',
-    planId,
-  ) as Promise<ApplyResult>,
-  deleteSkill: (skillId: string) => ipcRenderer.invoke(
-    'skillledger:skill:delete',
-    skillId,
-  ) as Promise<ApplyResult>,
-  checkSourceUpdates: () => ipcRenderer.invoke(
-    'skillledger:source:check-updates',
-  ) as Promise<SourceUpdateSnapshot>,
-  exportInventory: () => ipcRenderer.invoke(
-    'skillledger:inventory:export',
-  ) as Promise<InventoryExportResult>,
-  getAppVersion: () => ipcRenderer.invoke('skillledger:get-app-version') as Promise<string>,
-  checkForUpdates: () => ipcRenderer.invoke('skillledger:check-for-updates') as Promise<AppUpdateStatus>,
+  scan: () => invoke('scan'),
+  readSkillContent: (skillId, relativePath) => invoke('readSkillContent', { skillId, relativePath }),
+  revealSkill: (skillId) => invoke('revealSkill', skillId),
+  previewExternalSkill: (url) => invoke('previewExternalSkill', url),
+  installExternalSkill: (planId) => invoke('installExternalSkill', planId),
+  deleteSkill: (skillId) => invoke('deleteSkill', skillId),
+  checkSourceUpdates: () => invoke('checkSourceUpdates'),
+  exportInventory: () => invoke('exportInventory'),
+  getAppVersion: () => invoke('appVersion'),
+  checkForUpdates: () => invoke('checkUpdates'),
   onUpdateState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, status: AppUpdateStatus) => listener(status)
-    ipcRenderer.on('skillledger:update-state', handler)
-    return () => ipcRenderer.removeListener('skillledger:update-state', handler)
+    ipcRenderer.on(ipcEventChannels.updateState, handler)
+    return () => ipcRenderer.removeListener(ipcEventChannels.updateState, handler)
   },
-  installUpdate: () => ipcRenderer.invoke('skillledger:install-update') as Promise<void>,
-  openUpdatesPage: () => ipcRenderer.invoke('skillledger:open-updates-page') as Promise<void>,
+  installUpdate: () => invoke('installUpdate'),
+  openUpdatesPage: () => invoke('openUpdatesPage'),
   reconcile: {
-    preview: (request?: ReconcileRequest) => ipcRenderer.invoke(
-      'skillledger:reconcile:preview',
-      request,
-    ) as Promise<ReconciliationPreview>,
-    apply: (planId: string) => ipcRenderer.invoke(
-      'skillledger:reconcile:apply',
-      planId,
-    ) as Promise<ApplyResult>,
-    rollback: (journalId: string) => ipcRenderer.invoke(
-      'skillledger:reconcile:rollback',
-      journalId,
-    ) as Promise<RollbackResult>,
-    activity: () => ipcRenderer.invoke(
-      'skillledger:reconcile:activity',
-    ) as Promise<ActivitySnapshot>,
-    discard: (journalId: string) => ipcRenderer.invoke(
-      'skillledger:reconcile:discard',
-      journalId,
-    ) as Promise<DiscardResult>,
+    preview: (request) => invoke('reconcilePreview', request),
+    apply: (planId) => invoke('reconcileApply', planId),
+    rollback: (journalId) => invoke('reconcileRollback', journalId),
+    activity: () => invoke('reconcileActivity'),
+    discard: (journalId) => invoke('reconcileDiscard', journalId),
   },
   team: {
-    status: () => ipcRenderer.invoke('skillledger:team:status') as Promise<TeamStatus>,
-    importPolicy: (json: string) => ipcRenderer.invoke(
-      'skillledger:team:import-policy',
-      json,
-    ) as Promise<TeamImportResult>,
-    importManifest: (json: string) => ipcRenderer.invoke(
-      'skillledger:team:import-manifest',
-      json,
-    ) as Promise<TeamImportResult>,
+    status: () => invoke('teamStatus'),
+    importPolicy: (json) => invoke('teamImportPolicy', json),
+    importManifest: (json) => invoke('teamImportManifest', json),
   },
 }
 
