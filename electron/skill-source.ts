@@ -25,6 +25,8 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SKILL_BYTES = 10 * 1024 * 1024
 const DOWNLOAD_CONCURRENCY = 8
 const SOURCE_CHECK_CONCURRENCY = 4
+const GITHUB_REQUEST_TIMEOUT_MS = 15_000
+const GITHUB_PARSE_TIMEOUT_MS = 30_000
 
 class GitHubResponseError extends Error {
   constructor(readonly status: number) {
@@ -34,6 +36,51 @@ class GitHubResponseError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function abortableFetch(
+  fetchSource: FetchSource,
+  input: string,
+  init: RequestInit,
+): Promise<Response> {
+  const signal = init.signal
+  if (!signal) return fetchSource(input, init)
+  if (signal.aborted) throw signal.reason ?? new Error('GitHub request was aborted.')
+  let onAbort: () => void = () => undefined
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new Error('GitHub request was aborted.'))
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([fetchSource(input, init), aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+async function githubResponse(
+  fetchSource: FetchSource,
+  url: string,
+  accept: string,
+): Promise<Response> {
+  const signal = AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS)
+  try {
+    return await abortableFetch(fetchSource, url, {
+      headers: {
+        Accept: accept,
+        'User-Agent': 'SkillLedger',
+      },
+      credentials: 'omit',
+      redirect: 'error',
+      signal,
+    })
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error('GitHub request timed out after 15 seconds. Check your network connection or GitHub availability, then try again.')
+    }
+    const reason = error instanceof Error && error.message ? error.message : 'Unknown network error.'
+    throw new Error(`GitHub request failed: ${reason}`)
+  }
 }
 
 export function normalizeSourcePin(value: unknown): SourcePin | null {
@@ -72,15 +119,7 @@ export function normalizeSourcePin(value: unknown): SourcePin | null {
 }
 
 async function githubJson(fetchSource: FetchSource, url: string): Promise<Record<string, unknown>> {
-  const response = await fetchSource(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'SkillLedger',
-    },
-    credentials: 'omit',
-    redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
-  })
+  const response = await githubResponse(fetchSource, url, 'application/vnd.github+json')
   if (!response.ok) throw new GitHubResponseError(response.status)
   const value = await response.json() as unknown
   if (!isRecord(value)) throw new Error('GitHub returned an invalid response.')
@@ -92,15 +131,7 @@ async function githubBytes(
   url: string,
   expectedBytes: number,
 ): Promise<Buffer> {
-  const response = await fetchSource(url, {
-    headers: {
-      Accept: 'application/octet-stream',
-      'User-Agent': 'SkillLedger',
-    },
-    credentials: 'omit',
-    redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
-  })
+  const response = await githubResponse(fetchSource, url, 'application/octet-stream')
   if (!response.ok) throw new Error(`GitHub returned ${response.status}.`)
   const reader = response.body?.getReader()
   if (!reader) throw new Error('GitHub returned an empty source file.')
@@ -443,10 +474,24 @@ export async function stageGitHubSkillFromUrl(
   destination: string,
   fetchSource: FetchSource,
 ): Promise<SourcePin> {
-  const source = await resolveGitHubSkillUrl(url, fetchSource)
-  return {
-    ...source,
-    sha256: await downloadGitHubSkill(source, destination, fetchSource),
+  const signal = AbortSignal.timeout(GITHUB_PARSE_TIMEOUT_MS)
+  const timedFetch: FetchSource = (input, init = {}) => {
+    const combinedSignal = init.signal
+      ? AbortSignal.any([init.signal, signal])
+      : signal
+    return abortableFetch(fetchSource, input, { ...init, signal: combinedSignal })
+  }
+  try {
+    const source = await resolveGitHubSkillUrl(url, timedFetch)
+    return {
+      ...source,
+      sha256: await downloadGitHubSkill(source, destination, timedFetch),
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error('GitHub skill parsing timed out after 30 seconds. Check your network connection or GitHub availability, then try again.')
+    }
+    throw error
   }
 }
 

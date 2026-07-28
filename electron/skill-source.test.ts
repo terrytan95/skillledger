@@ -2,9 +2,14 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fingerprint } from './path-fingerprint'
-import { discoverGitHubSourceUpdates, resolveGitHubSkillUrl, stageGitHubSkill } from './skill-source'
+import {
+  discoverGitHubSourceUpdates,
+  resolveGitHubSkillUrl,
+  stageGitHubSkill,
+  stageGitHubSkillFromUrl,
+} from './skill-source'
 
 const temporaryDirectories: string[] = []
 
@@ -43,6 +48,42 @@ describe('resolveGitHubSkillUrl', () => {
       'https://example.com/example/skills/tree/main/skills/demo',
       fetchSource,
     )).rejects.toThrow('Only public https://github.com')
+  })
+
+  it('stops parsing a stalled link with an actionable timeout reason', async () => {
+    const operation = new AbortController()
+    const request = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => (
+      milliseconds === 30_000 ? operation.signal : request.signal
+    ))
+    const fetchSource = async (_input: string, init?: RequestInit): Promise<Response> => (
+      new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })
+    )
+    const parsed = stageGitHubSkillFromUrl(
+      'https://github.com/example/skills/tree/main/skills/demo',
+      path.join(os.tmpdir(), 'unused-staging-path'),
+      fetchSource,
+    ).then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+
+    operation.abort()
+    const outcome = await Promise.race([
+      parsed,
+      new Promise<string>((resolve) => setImmediate(() => resolve('still parsing'))),
+    ])
+    request.abort()
+    await parsed
+    const usedOperationTimeout = timeout.mock.calls.some(([milliseconds]) => milliseconds === 30_000)
+    timeout.mockRestore()
+
+    expect(usedOperationTimeout).toBe(true)
+    expect(outcome).toBe(
+      'GitHub skill parsing timed out after 30 seconds. Check your network connection or GitHub availability, then try again.',
+    )
   })
 })
 
