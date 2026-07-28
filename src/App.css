@@ -698,13 +698,25 @@ main { min-height: 0; overflow: hidden; }
   grid-column: 2;
   position: relative;
   width: min(100%, 280px);
+  margin-right: -8px;
   justify-self: end;
 }
+.font-size-control::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 5%;
+  right: 5%;
+  height: 2px;
+  background: linear-gradient(to right, var(--accent) 0 var(--font-size-fill), var(--line) var(--font-size-fill) 100%);
+}
 .font-size-control input {
-  width: 90%;
+  position: relative;
+  z-index: 1;
+  width: calc(90% + 18px);
   height: 14px;
   display: block;
-  margin: 0 5%;
+  margin: 0 calc(5% - 9px);
   padding: 0;
   appearance: none;
   background: transparent;
@@ -713,7 +725,7 @@ main { min-height: 0; overflow: hidden; }
 .font-size-control input:active { cursor: grabbing; }
 .font-size-control input::-webkit-slider-runnable-track {
   height: 2px;
-  background: linear-gradient(to right, var(--accent) 0 var(--font-size-fill), var(--line) var(--font-size-fill) 100%);
+  background: transparent;
 }
 .font-size-control input::-webkit-slider-thumb {
   width: 18px;
@@ -724,22 +736,17 @@ main { min-height: 0; overflow: hidden; }
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 1px 4px var(--panel-shadow);
-  transition: box-shadow .14s ease, height .14s ease, margin .14s ease, width .14s ease;
+  transition: box-shadow .14s ease;
 }
 .font-size-control input:hover::-webkit-slider-thumb,
 .font-size-control input:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 4px var(--accent-soft), 0 1px 4px var(--panel-shadow);
 }
 .font-size-control input:focus-visible { outline: 0; }
-.font-size-control.dragging input::-webkit-slider-thumb {
-  width: 20px;
-  height: 20px;
-  margin-top: -9px;
-}
 .font-size-bubble {
   position: absolute;
   top: 7px;
-  z-index: 1;
+  z-index: 2;
   padding: 3px 6px;
   transform: translate(-50%, -100%);
   background: var(--accent);
