@@ -12,7 +12,7 @@ yarn build:app
 Keep changes narrow:
 
 - Put filesystem facts and health rules in `electron/skill-inventory.ts`.
-- Keep the preload API minimal and typed in `src/types.ts`.
+- Keep the preload API minimal and typed in `electron/ipc-contract.ts`.
 - Do not give the renderer direct Node.js or filesystem access.
 - Add one focused test for each non-trivial inventory rule.
 - Do not enable an Apply action without a journal, verification, and rollback path.
