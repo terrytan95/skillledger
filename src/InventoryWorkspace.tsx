@@ -64,6 +64,7 @@ const defaultLedgerSplit = 0.35
 const defaultFileTreeWidth = 176
 const minimumFileTreeWidth = 140
 const maximumFileTreeWidth = 480
+const minimumScanFeedbackMs = 1_000
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
@@ -195,6 +196,8 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
 
     const refresh = useCallback(async (showStatus = false) => {
       if (!window.skillLedger) return
+      const feedbackStartedAt = showStatus ? performance.now() : 0
+      let terminalPhase: Extract<ScanPhase, 'success' | 'error'> = 'success'
       setLoading(true)
       setScanError('')
       if (showStatus) setScanPhase('scanning')
@@ -205,11 +208,17 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
         setSourceCheckPhase('idle')
         setInventoryMessage('')
         setLiveMode(true)
-        if (showStatus) setScanPhase('success')
       } catch (error) {
         setScanError((error as Error).message)
-        if (showStatus) setScanPhase('error')
+        terminalPhase = 'error'
       } finally {
+        if (showStatus) {
+          const remainingFeedbackMs = minimumScanFeedbackMs - (performance.now() - feedbackStartedAt)
+          if (remainingFeedbackMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, remainingFeedbackMs))
+          }
+          setScanPhase(terminalPhase)
+        }
         setLoading(false)
       }
     }, [acceptSnapshot])
