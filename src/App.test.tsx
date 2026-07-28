@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { automaticUpdateIntervalMs, clampSplitRatio } from './App'
+import { clampSplitRatio } from './App'
+import { automaticUpdateIntervalMs } from './preferences'
 
 describe('clampSplitRatio', () => {
   it('keeps the divider within usable panel bounds', () => {

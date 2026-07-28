@@ -54,6 +54,21 @@ import type {
 import { localizeHealthReason, messages, type Language, type Messages } from './i18n'
 import { demoSkillContent, demoSnapshot } from './demo'
 import { MarkdownDocument, markdownHeadings } from './markdown'
+import {
+  applyPreferences,
+  automaticUpdateIntervalMs,
+  defaultPreferences,
+  persistPreferences,
+  preferenceOptions,
+  readPreferences,
+  resolveLanguage,
+  updatePreference,
+  type Accent,
+  type FontFamily,
+  type LanguagePreference,
+  type Preferences,
+  type ThemeMode,
+} from './preferences'
 import appIcon from '../build/icon.svg'
 import './App.css'
 
@@ -61,70 +76,14 @@ type HealthFilter = SkillHealth | 'all' | 'needs-review'
 type View = 'inventory' | 'activity' | 'team' | 'settings'
 type ContentMode = 'rendered' | 'source'
 type WorkbenchTab = 'overview' | 'content' | 'files'
-type ThemeMode = 'system' | 'light' | 'dark'
-type FontFamily = 'system' | 'sans' | 'serif' | 'mono'
-const fontSizes = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18] as const
-type FontSize = typeof fontSizes[number]
-type Accent =
-  | 'forest'
-  | 'ocean'
-  | 'violet'
-  | 'amber'
-  | 'rose'
-  | 'mist-pine'
-  | 'haze-blue'
-  | 'red-bean'
-  | 'clay-blush'
-  | 'moss'
-  | 'smoky-violet'
-  | 'stone-taupe'
-  | 'lake-teal'
-type LanguagePreference = 'system' | Language
 type UpdatePhase = 'idle' | 'checking' | 'success' | 'error'
 
-interface Preferences {
-  theme: ThemeMode
-  accent: Accent
-  language: LanguagePreference
-  fontFamily: FontFamily
-  fontSize: FontSize
-  automaticUpdates: boolean
-}
-
-const preferenceKey = 'skillledger:preferences'
 const ledgerSplitKey = 'skillledger:ledger-split'
 const fileTreeWidthKey = 'skillledger:file-tree-width'
 const defaultLedgerSplit = 0.35
 const defaultFileTreeWidth = 176
 const minimumFileTreeWidth = 140
 const maximumFileTreeWidth = 480
-export const automaticUpdateIntervalMs = 24 * 60 * 60 * 1000
-const themeModes: ThemeMode[] = ['system', 'light', 'dark']
-const accents: Accent[] = [
-  'forest',
-  'ocean',
-  'violet',
-  'amber',
-  'rose',
-  'mist-pine',
-  'haze-blue',
-  'red-bean',
-  'clay-blush',
-  'moss',
-  'smoky-violet',
-  'stone-taupe',
-  'lake-teal',
-]
-const languages: LanguagePreference[] = ['system', 'en', 'zh-CN']
-const fontFamilies: FontFamily[] = ['system', 'sans', 'serif', 'mono']
-const defaultPreferences: Preferences = {
-  theme: 'system',
-  accent: 'forest',
-  language: 'system',
-  fontFamily: 'system',
-  fontSize: 10,
-  automaticUpdates: true,
-}
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
@@ -144,29 +103,6 @@ function readFileTreeWidth(): number {
   return Number.isFinite(stored)
     ? clamp(stored, minimumFileTreeWidth, maximumFileTreeWidth)
     : defaultFileTreeWidth
-}
-
-function readPreferences(): Preferences {
-  try {
-    const stored = JSON.parse(localStorage.getItem(preferenceKey) ?? '{}') as Partial<Preferences> & { fontSize?: unknown }
-    const legacyFontSize = { small: 9, medium: 10, large: 11 }[String(stored.fontSize) as 'small' | 'medium' | 'large']
-    const fontSize = typeof stored.fontSize === 'number' ? stored.fontSize : legacyFontSize
-    return {
-      theme: themeModes.includes(stored.theme as ThemeMode) ? stored.theme as ThemeMode : defaultPreferences.theme,
-      accent: accents.includes(stored.accent as Accent) ? stored.accent as Accent : defaultPreferences.accent,
-      language: languages.includes(stored.language as LanguagePreference) ? stored.language as LanguagePreference : defaultPreferences.language,
-      fontFamily: fontFamilies.includes(stored.fontFamily as FontFamily) ? stored.fontFamily as FontFamily : defaultPreferences.fontFamily,
-      fontSize: fontSizes.includes(fontSize as FontSize) ? fontSize as FontSize : defaultPreferences.fontSize,
-      automaticUpdates: typeof stored.automaticUpdates === 'boolean' ? stored.automaticUpdates : defaultPreferences.automaticUpdates,
-    }
-  } catch {
-    return defaultPreferences
-  }
-}
-
-function resolveLanguage(preference: LanguagePreference): Language {
-  if (preference !== 'system') return preference
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
 }
 
 function StatusChip({ health, copy }: { health: SkillHealth; copy: Messages }) {
@@ -1170,13 +1106,20 @@ function SettingsView({
   const downloadLabel = `${copy.downloadingUpdate}${updateStatus?.downloadPercent == null ? '' : ` ${Math.round(updateStatus.downloadPercent)}%`}`
   const [fontSizeDragging, setFontSizeDragging] = useState(false)
   const fontSizeInput = useRef<HTMLInputElement>(null)
+  const fontSizes = preferenceOptions.fontSize
   const fontSizeProgress = (preferences.fontSize - fontSizes[0]) / (fontSizes.at(-1)! - fontSizes[0]) * 100
   const fontSizeThumbPosition = 5 + (preferences.fontSize - fontSizes[0]) * 10
-  const themeOptions = [
-    { value: 'system' as const, label: copy.system, Icon: Monitor },
-    { value: 'light' as const, label: copy.light, Icon: Sun },
-    { value: 'dark' as const, label: copy.dark, Icon: Moon },
-  ]
+  const themeLabels: Record<ThemeMode, string> = {
+    system: copy.system,
+    light: copy.light,
+    dark: copy.dark,
+  }
+  const themeIcons = { system: Monitor, light: Sun, dark: Moon }
+  const themeOptions = preferenceOptions.theme.map((value) => ({
+    value,
+    label: themeLabels[value],
+    Icon: themeIcons[value],
+  }))
   const accentLabels: Record<Accent, string> = {
     forest: copy.forest,
     ocean: copy.ocean,
@@ -1191,6 +1134,17 @@ function SettingsView({
     'smoky-violet': copy.smokyViolet,
     'stone-taupe': copy.stoneTaupe,
     'lake-teal': copy.lakeTeal,
+  }
+  const languageLabels: Record<LanguagePreference, string> = {
+    system: copy.followSystem,
+    en: copy.english,
+    'zh-CN': copy.simplifiedChinese,
+  }
+  const fontFamilyLabels: Record<FontFamily, string> = {
+    system: copy.fontDefault,
+    sans: copy.fontSans,
+    serif: copy.fontSerif,
+    mono: copy.fontMono,
   }
 
   return (
@@ -1244,7 +1198,7 @@ function SettingsView({
                 <ChevronDown size={14} aria-hidden="true" />
               </summary>
               <div className="accent-menu" role="radiogroup" aria-label={copy.accentColor}>
-                {accents.map((accent) => (
+                {preferenceOptions.accent.map((accent) => (
                   <button
                     key={accent}
                     className={preferences.accent === accent ? 'selected' : ''}
@@ -1273,18 +1227,17 @@ function SettingsView({
           <label className="setting-row">
             <div><strong>{copy.appLanguage}</strong><span>{copy.appLanguageDescription}</span></div>
             <select value={preferences.language} onChange={(event) => onPreference('language', event.target.value as LanguagePreference)}>
-              <option value="system">{copy.followSystem}</option>
-              <option value="en">{copy.english}</option>
-              <option value="zh-CN">{copy.simplifiedChinese}</option>
+              {preferenceOptions.language.map((value) => (
+                <option value={value} key={value}>{languageLabels[value]}</option>
+              ))}
             </select>
           </label>
           <label className="setting-row">
             <div><strong>{copy.interfaceFont}</strong><span>{copy.interfaceFontDescription}</span></div>
             <select value={preferences.fontFamily} onChange={(event) => onPreference('fontFamily', event.target.value as FontFamily)}>
-              <option value="system">{copy.fontDefault}</option>
-              <option value="sans">{copy.fontSans}</option>
-              <option value="serif">{copy.fontSerif}</option>
-              <option value="mono">{copy.fontMono}</option>
+              {preferenceOptions.fontFamily.map((value) => (
+                <option value={value} key={value}>{fontFamilyLabels[value]}</option>
+              ))}
             </select>
           </label>
           <div className="font-size-row">
@@ -1309,8 +1262,8 @@ function SettingsView({
                 value={preferences.fontSize}
                 aria-labelledby="font-size-label"
                 aria-describedby="font-size-description"
-                aria-valuetext={`${preferences.fontSize} ${copy.fontSizePixels}${preferences.fontSize === 10 ? `, ${copy.fontDefault}` : ''}`}
-                onChange={(event) => onPreference('fontSize', Number(event.target.value) as FontSize)}
+                aria-valuetext={`${preferences.fontSize} ${copy.fontSizePixels}${preferences.fontSize === defaultPreferences.fontSize ? `, ${copy.fontDefault}` : ''}`}
+                onChange={(event) => onPreference('fontSize', Number(event.target.value) as Preferences['fontSize'])}
                 onPointerDown={() => setFontSizeDragging(true)}
                 onPointerUp={() => setFontSizeDragging(false)}
                 onPointerCancel={() => setFontSizeDragging(false)}
@@ -1509,7 +1462,7 @@ export default function App() {
   }
 
   const setPreference = useCallback(<Key extends keyof Preferences>(key: Key, value: Preferences[Key]) => {
-    setPreferences((current) => ({ ...current, [key]: value }))
+    setPreferences((current) => updatePreference(current, key, value))
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
@@ -1526,20 +1479,12 @@ export default function App() {
   useEffect(() => {
     const root = document.documentElement
     const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
-    const applyTheme = () => {
-      root.dataset.theme = preferences.theme === 'system'
-        ? colorScheme.matches ? 'dark' : 'light'
-        : preferences.theme
-    }
+    const apply = () => applyPreferences(preferences, language, colorScheme.matches, root)
 
-    localStorage.setItem(preferenceKey, JSON.stringify(preferences))
-    root.dataset.accent = preferences.accent
-    root.dataset.fontFamily = preferences.fontFamily
-    root.style.fontSize = `${preferences.fontSize}px`
-    root.lang = language
-    applyTheme()
-    colorScheme.addEventListener('change', applyTheme)
-    return () => colorScheme.removeEventListener('change', applyTheme)
+    persistPreferences(preferences)
+    apply()
+    colorScheme.addEventListener('change', apply)
+    return () => colorScheme.removeEventListener('change', apply)
   }, [language, preferences])
 
   useEffect(() => {
