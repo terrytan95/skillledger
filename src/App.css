@@ -206,14 +206,14 @@ main { min-height: 0; overflow: hidden; }
   padding: 18px 14px;
   overflow: auto;
 }
-.ledger-separator {
+.panel-separator {
   position: relative;
   z-index: 1;
   min-width: 8px;
   cursor: col-resize;
   touch-action: none;
 }
-.ledger-separator::after {
+.panel-separator::after {
   content: "";
   position: absolute;
   top: 0;
@@ -224,11 +224,11 @@ main { min-height: 0; overflow: hidden; }
   transform: translateX(-50%);
   transition: width .12s ease, background .12s ease;
 }
-.ledger-separator:hover::after, .ledger-separator:focus-visible::after {
+.panel-separator:hover::after, .panel-separator:focus-visible::after {
   width: 2px;
   background: var(--accent);
 }
-.ledger-separator:focus-visible { outline: 0; }
+.panel-separator:focus-visible { outline: 0; }
 .panel-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 13px; }
 .panel-title h1 { margin: 4px 0 0; font-family: var(--display-font-family); font-size: 2.4rem; font-weight: 500; }
 .quiet-copy { color: var(--muted); font-size: 0.9rem; }
@@ -324,13 +324,12 @@ main { min-height: 0; overflow: hidden; }
 .skill-content-layout {
   height: 100%;
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-columns: clamp(140px, var(--file-tree-width, 176px), 45%) 8px minmax(0, 1fr);
 }
 .skill-file-tree {
   min-width: 0;
   padding: 18px 10px;
   overflow: auto;
-  border-right: 1px solid var(--line);
   background: var(--surface);
 }
 .skill-file-tree .section-label { padding: 0 4px; }
@@ -930,7 +929,6 @@ main { min-height: 0; overflow: hidden; }
   .rail-item.active::before { left: -6px; }
   .skill-row { grid-template-columns: 8px minmax(140px, 1fr) 16px; }
   .skill-row .row-source, .skill-row .row-count { display: none; }
-  .skill-content-layout { grid-template-columns: 150px minmax(0, 1fr); }
   .reader-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .reader-outline { display: none; }
 }
@@ -945,7 +943,7 @@ main { min-height: 0; overflow: hidden; }
   .control-context { grid-column: 1 / -1; }
   .ledger-layout { grid-template-columns: 44px minmax(240px, var(--skill-list-width, 35%)) 8px minmax(320px, 1fr); }
   .skill-content-layout { grid-template-columns: 1fr; }
-  .skill-content-layout > .skill-file-tree { display: none; }
+  .skill-content-layout > .skill-file-tree, .file-tree-separator { display: none; }
   .open-reader-button { width: 34px; padding: 0; font-size: 0; }
   .reader-layout { grid-template-columns: 1fr; }
   .reader-files { display: none; }

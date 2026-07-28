@@ -93,7 +93,11 @@ interface Preferences {
 
 const preferenceKey = 'skillledger:preferences'
 const ledgerSplitKey = 'skillledger:ledger-split'
+const fileTreeWidthKey = 'skillledger:file-tree-width'
 const defaultLedgerSplit = 0.35
+const defaultFileTreeWidth = 176
+const minimumFileTreeWidth = 140
+const maximumFileTreeWidth = 480
 export const automaticUpdateIntervalMs = 24 * 60 * 60 * 1000
 const themeModes: ThemeMode[] = ['system', 'light', 'dark']
 const accents: Accent[] = [
@@ -122,13 +126,24 @@ const defaultPreferences: Preferences = {
   automaticUpdates: true,
 }
 
-export function clampSplitRatio(value: number, minimum = 0.25, maximum = 0.65): number {
+function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
+}
+
+export function clampSplitRatio(value: number, minimum = 0.25, maximum = 0.65): number {
+  return clamp(value, minimum, maximum)
 }
 
 function readLedgerSplitRatio(): number {
   const stored = Number.parseFloat(localStorage.getItem(ledgerSplitKey) ?? '')
   return Number.isFinite(stored) ? clampSplitRatio(stored) : defaultLedgerSplit
+}
+
+function readFileTreeWidth(): number {
+  const stored = Number.parseFloat(localStorage.getItem(fileTreeWidthKey) ?? '')
+  return Number.isFinite(stored)
+    ? clamp(stored, minimumFileTreeWidth, maximumFileTreeWidth)
+    : defaultFileTreeWidth
 }
 
 function readPreferences(): Preferences {
@@ -161,6 +176,56 @@ function StatusChip({ health, copy }: { health: SkillHealth; copy: Messages }) {
       <Icon size={13} aria-hidden="true" />
       {copy[health]}
     </span>
+  )
+}
+
+function ResizableSeparator({
+  className,
+  label,
+  value,
+  minimum,
+  maximum,
+  onResize,
+  onStep,
+}: {
+  className: string
+  label: string
+  value: number
+  minimum: number
+  maximum: number
+  onResize: (clientX: number) => void
+  onStep: (direction: -1 | 1) => void
+}) {
+  return (
+    <div
+      className={`panel-separator ${className}`}
+      role="separator"
+      aria-label={label}
+      aria-orientation="vertical"
+      aria-valuemin={minimum}
+      aria-valuemax={maximum}
+      aria-valuenow={Math.round(value)}
+      tabIndex={0}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        onResize(event.clientX)
+      }}
+      onPointerMove={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) onResize(event.clientX)
+      }}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        onStep(event.key === 'ArrowRight' ? 1 : -1)
+      }}
+    />
   )
 }
 
@@ -371,9 +436,12 @@ function LedgerView({
 }) {
   const [tab, setTab] = useState<WorkbenchTab>('content')
   const [splitRatio, setSplitRatio] = useState(readLedgerSplitRatio)
+  const [fileTreeWidth, setFileTreeWidth] = useState(readFileTreeWidth)
   const layout = useRef<HTMLDivElement>(null)
+  const contentLayout = useRef<HTMLDivElement>(null)
   useEffect(() => { setTab('content') }, [selected?.id])
   useEffect(() => { localStorage.setItem(ledgerSplitKey, String(splitRatio)) }, [splitRatio])
+  useEffect(() => { localStorage.setItem(fileTreeWidthKey, String(fileTreeWidth)) }, [fileTreeWidth])
 
   const splitGeometry = () => {
     const container = layout.current
@@ -397,6 +465,29 @@ function LedgerView({
       clientX - geometry.bounds.left - geometry.railWidth - geometry.separatorWidth / 2
     ) / geometry.bounds.width
     setSplitRatio(clampSplitRatio(next, geometry.minimum, geometry.maximum))
+  }
+
+  const fileTreeGeometry = () => {
+    const container = contentLayout.current
+    const separator = container?.querySelector<HTMLElement>('.file-tree-separator')
+    if (!container || !separator) return null
+
+    const bounds = container.getBoundingClientRect()
+    const maximum = Math.max(
+      minimumFileTreeWidth,
+      Math.min(maximumFileTreeWidth, bounds.width * 0.45),
+    )
+    return { bounds, maximum, separatorWidth: separator.offsetWidth }
+  }
+
+  const resizeFileTree = (clientX: number) => {
+    const geometry = fileTreeGeometry()
+    if (!geometry) return
+    setFileTreeWidth(clamp(
+      clientX - geometry.bounds.left - geometry.separatorWidth / 2,
+      minimumFileTreeWidth,
+      geometry.maximum,
+    ))
   }
 
   return (
@@ -434,31 +525,17 @@ function LedgerView({
           ))}
         </div>
       </section>
-      <div
+      <ResizableSeparator
         className="ledger-separator"
-        role="separator"
-        aria-label={copy.resizePanels}
-        aria-orientation="vertical"
-        aria-valuemin={25}
-        aria-valuemax={65}
-        aria-valuenow={Math.round(splitRatio * 100)}
-        tabIndex={0}
-        onPointerDown={(event) => {
-          if (event.button !== 0) return
-          event.preventDefault()
-          event.currentTarget.setPointerCapture(event.pointerId)
-          resize(event.clientX)
-        }}
-        onPointerMove={(event) => {
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientX)
-        }}
-        onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
+        label={copy.resizePanels}
+        value={splitRatio * 100}
+        minimum={25}
+        maximum={65}
+        onResize={resize}
+        onStep={(direction) => {
           const geometry = splitGeometry()
           setSplitRatio((current) => clampSplitRatio(
-            current + (event.key === 'ArrowRight' ? 0.02 : -0.02),
+            current + direction * 0.02,
             geometry?.minimum,
             geometry?.maximum,
           ))
@@ -501,8 +578,28 @@ function LedgerView({
                 />
               )}
               {tab === 'content' && (
-                <div className="skill-content-layout">
+                <div
+                  className="skill-content-layout"
+                  ref={contentLayout}
+                  style={{ '--file-tree-width': `${fileTreeWidth}px` } as CSSProperties}
+                >
                   <SkillFileTree entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
+                  <ResizableSeparator
+                    className="file-tree-separator"
+                    label={copy.resizeFileTree}
+                    value={fileTreeWidth}
+                    minimum={minimumFileTreeWidth}
+                    maximum={maximumFileTreeWidth}
+                    onResize={resizeFileTree}
+                    onStep={(direction) => {
+                      const geometry = fileTreeGeometry()
+                      setFileTreeWidth((current) => clamp(
+                        current + direction * 12,
+                        minimumFileTreeWidth,
+                        geometry?.maximum ?? maximumFileTreeWidth,
+                      ))
+                    }}
+                  />
                   <SkillDocument content={content} loading={contentLoading} error={contentError} mode={contentMode} onMode={onContentMode} copy={copy} />
                 </div>
               )}
