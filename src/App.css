@@ -207,7 +207,7 @@ main { min-height: 0; overflow: hidden; }
 .ledger-layout {
   height: 100%;
   display: grid;
-  grid-template-columns: 96px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(360px, 1fr);
+  grid-template-columns: 80px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(360px, 1fr);
   background: var(--canvas);
 }
 .library-rail {
@@ -218,13 +218,13 @@ main { min-height: 0; overflow: hidden; }
 .rail-item {
   position: relative;
   width: 100%;
-  min-height: 128px;
+  min-height: 76px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  padding: 18px 8px;
+  gap: 5px;
+  padding: 8px 5px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 1.1rem;
@@ -232,7 +232,7 @@ main { min-height: 0; overflow: hidden; }
   line-height: 1.25;
   text-align: center;
 }
-.rail-item svg { width: 26px; height: 26px; }
+.rail-item svg { width: 24px; height: 24px; }
 .rail-item span { max-width: 64px; }
 .rail-item:hover { color: var(--ink); background: var(--row-hover); }
 .rail-item.active { color: var(--accent); background: var(--accent-soft); }
@@ -937,7 +937,7 @@ main { min-height: 0; overflow: hidden; }
   .brand { min-width: 190px; }
   .brand small { display: none; }
   .header-status, .mode-badge { display: none; }
-  .ledger-layout { grid-template-columns: 88px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(320px, 1fr); }
+  .ledger-layout { grid-template-columns: 72px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(320px, 1fr); }
   .skill-row { grid-template-columns: 8px minmax(140px, 1fr) 16px; }
   .skill-row .row-source, .skill-row .row-count { display: none; }
   .reader-layout { grid-template-columns: 220px minmax(0, 1fr); }
@@ -952,7 +952,7 @@ main { min-height: 0; overflow: hidden; }
   .header-actions { margin-left: auto; }
   .control-bar { grid-template-columns: 1fr auto; }
   .control-context { grid-column: 1 / -1; }
-  .ledger-layout { grid-template-columns: 82px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(320px, 1fr); }
+  .ledger-layout { grid-template-columns: 68px minmax(200px, var(--skill-list-width, 35%)) 8px minmax(320px, 1fr); }
   .skill-content-layout { grid-template-columns: 1fr; }
   .skill-content-layout > .skill-file-tree, .file-tree-separator { display: none; }
   .open-reader-button { width: 34px; padding: 0; font-size: 0; }
