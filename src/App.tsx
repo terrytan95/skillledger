@@ -1543,14 +1543,11 @@ export default function App() {
   }, [language, preferences])
 
   useEffect(() => {
-    if (!preferences.automaticUpdates) {
-      automaticUpdateChecked.current = false
-      return
-    }
     if (!automaticUpdateChecked.current) {
       automaticUpdateChecked.current = true
       void checkUpdates()
     }
+    if (!preferences.automaticUpdates) return
     const interval = window.setInterval(() => void checkUpdates(), automaticUpdateIntervalMs)
     return () => window.clearInterval(interval)
   }, [checkUpdates, preferences.automaticUpdates])
