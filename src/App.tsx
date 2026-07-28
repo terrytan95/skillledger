@@ -1284,7 +1284,6 @@ function SettingsView({
                 <strong id="font-size-label">{copy.interfaceFontSize}</strong>
                 <span id="font-size-description">{copy.fontSizeDragDescription}</span>
               </div>
-              <output htmlFor="font-size-range">{copy.fontSizeCurrent} {preferences.fontSize} px</output>
             </div>
             <div
               className={`font-size-control ${fontSizeDragging ? 'dragging' : ''}`}
