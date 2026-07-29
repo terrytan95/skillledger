@@ -25,6 +25,7 @@ import {
   Code2,
   Command,
   Eye,
+  ExternalLink,
   FileText,
   Folder,
   FolderOpen,
@@ -1099,6 +1100,16 @@ function LedgerView({
                 <span>{copy.source} <strong>{selected.source ?? copy.localOnly}</strong></span>
               </div>
               <div className="workbench-actions">
+                {selected.sourcePin && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => void window.skillLedger?.openSkillSource(selected.id)}
+                    aria-label={copy.viewOnGitHub}
+                    title={copy.viewOnGitHub}
+                  >
+                    <GitBranch size={14} aria-hidden="true" />GitHub<ExternalLink size={12} aria-hidden="true" />
+                  </button>
+                )}
                 {canManage && (
                   <button className="secondary-button danger-button" onClick={onDelete} disabled={deleting}>
                     <Trash2 size={14} aria-hidden="true" />{deleting ? copy.deletingSkill : copy.deleteSkill}
