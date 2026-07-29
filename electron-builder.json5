@@ -12,6 +12,7 @@
   },
   "directories": { "output": "release/${version}" },
   "files": ["dist", "dist-electron"],
+  "extraResources": [{ "from": "build/app-update.yml", "to": "app-update.yml" }],
   "mac": {
     "category": "public.app-category.developer-tools",
     "icon": "build/icon.icns",
