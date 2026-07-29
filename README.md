@@ -10,6 +10,12 @@ SkillLedger is a local-first desktop control plane for global Agent Skills. It i
 
 ![SkillLedger Ledger interface](docs/assets/skillledger-ledger.png)
 
+## Install
+
+```bash
+brew install --cask terrytan95/tap/skillledger
+```
+
 ## Why SkillLedger
 
 Installing a skill is the easy part. Maintaining the same skill across multiple coding agents raises harder questions:
