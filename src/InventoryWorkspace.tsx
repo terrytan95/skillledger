@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -802,33 +803,74 @@ function SkillFileTree({
   onSelect: (path: string) => void
   copy: Messages
 }) {
+  const treeId = useId()
+  const [collapsedDirectories, setCollapsedDirectories] = useState<Set<string>>(() => new Set())
+  const childrenByParent = useMemo(() => {
+    const children = new Map<string, SkillContentEntry[]>()
+    for (const entry of entries) {
+      const separator = entry.path.lastIndexOf('/')
+      const parentPath = separator === -1 ? '' : entry.path.slice(0, separator)
+      children.set(parentPath, [...(children.get(parentPath) ?? []), entry])
+    }
+    return children
+  }, [entries])
+
+  const toggleDirectory = (path: string) => {
+    setCollapsedDirectories((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const renderEntries = (parentPath = ''): ReactNode => (
+    childrenByParent.get(parentPath)?.map((entry) => {
+      const label = entry.path.split('/').at(-1) ?? entry.path
+      const style = { paddingLeft: `${12 + entry.depth * 14}px` }
+      if (entry.kind === 'directory') {
+        const expanded = !collapsedDirectories.has(entry.path)
+        const branchId = `${treeId}-${encodeURIComponent(entry.path)}`
+        return (
+          <div className="file-tree-branch" key={entry.path}>
+            <button
+              type="button"
+              className="file-tree-row directory"
+              style={style}
+              aria-expanded={expanded}
+              aria-controls={branchId}
+              onClick={() => toggleDirectory(entry.path)}
+            >
+              {expanded ? <FolderOpen size={14} aria-hidden="true" /> : <Folder size={14} aria-hidden="true" />}
+              <span>{label}/</span>
+              <ChevronRight className="file-tree-chevron" size={13} aria-hidden="true" />
+            </button>
+            <div id={branchId} className={`file-tree-children ${expanded ? 'expanded' : ''}`}>
+              <div className="file-tree-children-inner" role="group" aria-hidden={!expanded} inert={!expanded}>
+                {renderEntries(entry.path)}
+              </div>
+            </div>
+          </div>
+        )
+      }
+      return (
+        <button
+          className={`file-tree-row ${selectedPath === entry.path ? 'selected' : ''}`}
+          key={entry.path}
+          style={style}
+          onClick={() => onSelect(entry.path)}
+        >
+          <FileText size={14} aria-hidden="true" />
+          <span>{label}</span>
+        </button>
+      )
+    }) ?? null
+  )
+
   return (
     <nav className="skill-file-tree" aria-label={copy.skillFiles}>
       <p className="section-label">{copy.files}</p>
-      {entries.map((entry) => {
-        const label = entry.path.split('/').at(-1) ?? entry.path
-        const style = { paddingLeft: `${12 + entry.depth * 14}px` }
-        if (entry.kind === 'directory') {
-          return (
-            <div className="file-tree-row directory" key={entry.path} style={style}>
-              <Folder size={14} aria-hidden="true" />
-              <span>{label}/</span>
-              <ChevronRight size={13} aria-hidden="true" />
-            </div>
-          )
-        }
-        return (
-          <button
-            className={`file-tree-row ${selectedPath === entry.path ? 'selected' : ''}`}
-            key={entry.path}
-            style={style}
-            onClick={() => onSelect(entry.path)}
-          >
-            <FileText size={14} aria-hidden="true" />
-            <span>{label}</span>
-          </button>
-        )
-      })}
+      {renderEntries()}
     </nav>
   )
 }
@@ -1089,7 +1131,7 @@ function LedgerView({
                   ref={contentLayout}
                   style={{ '--file-tree-width': `${fileTreeWidth}px` } as CSSProperties}
                 >
-                  <SkillFileTree entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
+                  <SkillFileTree key={content?.skillId ?? selected.id} entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
                   <ResizableSeparator
                     className="file-tree-separator"
                     label={copy.resizeFileTree}
@@ -1180,7 +1222,7 @@ function ReaderView({
       </header>
       <div className="reader-layout">
         <aside className="reader-files">
-          <SkillFileTree entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
+          <SkillFileTree key={content?.skillId ?? skill.id} entries={content?.files ?? []} selectedPath={content?.selectedPath} onSelect={onSelectFile} copy={copy} />
         </aside>
         <section className="reader-document">
           <SkillDocument content={content} loading={contentLoading} error={contentError} mode={contentMode} onMode={onContentMode} copy={copy} />

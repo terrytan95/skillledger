@@ -396,7 +396,27 @@ main { min-height: 0; overflow: hidden; }
   box-shadow: inset 2px 0 var(--accent);
 }
 .file-tree-row.selected svg { color: var(--accent); }
-.file-tree-row.directory { grid-template-columns: 18px minmax(0, 1fr) 14px; color: var(--muted); }
+.file-tree-row.directory {
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  color: var(--muted);
+}
+.file-tree-row.directory:hover { color: var(--ink); background: var(--row-hover); }
+.file-tree-chevron { transition: transform .16s ease-out; }
+.file-tree-row.directory[aria-expanded="true"] .file-tree-chevron { transform: rotate(90deg); }
+.file-tree-children {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .18s ease-out, opacity .12s ease-out;
+}
+.file-tree-children.expanded {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.file-tree-children-inner {
+  min-height: 0;
+  overflow: hidden;
+}
 .skill-document { min-width: 0; min-height: 0; display: grid; grid-template-rows: 44px minmax(0, 1fr); }
 .document-tools {
   display: flex;
