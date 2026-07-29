@@ -186,6 +186,17 @@ function isLockOperation(operation: StoredOperation): boolean {
   return operation.public.kind === 'write-lock'
 }
 
+function hiddenBackupPath(targetPath: string, journalId: string): string {
+  return path.join(
+    path.dirname(targetPath),
+    `.${path.basename(targetPath)}.skillledger-${journalId}.backup`,
+  )
+}
+
+function legacyBackupPath(targetPath: string, journalId: string): string {
+  return `${targetPath}.skillledger-${journalId}.backup`
+}
+
 export class SkillReconciler {
   private readonly plans = new Map<string, StoredPlan>()
   private readonly planReceipts = new Map<string, PlanReceipt>()
@@ -807,7 +818,7 @@ export class SkillReconciler {
       ...operation,
       backupPath: operation.public.before.kind === 'missing'
         ? null
-        : `${operation.public.targetPath}.skillledger-${journalId}.backup`,
+        : hiddenBackupPath(operation.public.targetPath, journalId),
     }))
     await writeJournalPlan(journalDirectory, {
       schemaVersion: 2,
@@ -1170,6 +1181,7 @@ export class SkillReconciler {
     if (!this.mutating) {
       this.mutating = true
       try {
+        await this.hideVisibleBackups()
         await this.cleanupExpiredBackups()
       } finally {
         this.mutating = false
@@ -1302,7 +1314,7 @@ export class SkillReconciler {
                 ? 'verified'
                 : 'incomplete'
         const backupBytes = (await Promise.all(plan.operations.map((operation) => (
-          operation.backupPath ? this.pathBytes(operation.backupPath) : Promise.resolve(0)
+          this.backupBytes(operation, journalId)
         )))).reduce((total, value) => total + value, 0)
         return {
           journalId,
@@ -1346,6 +1358,18 @@ export class SkillReconciler {
     }
   }
 
+  private async backupBytes(operation: JournalOperation, journalId: string): Promise<number> {
+    if (!operation.backupPath) return 0
+    const bytes = await this.pathBytes(operation.backupPath)
+    if (
+      bytes
+      || operation.backupPath !== legacyBackupPath(operation.public.targetPath, journalId)
+    ) {
+      return bytes
+    }
+    return this.pathBytes(hiddenBackupPath(operation.public.targetPath, journalId))
+  }
+
   private async verifiedJournals(): Promise<Array<Awaited<ReturnType<SkillReconciler['readJournal']>>>> {
     const journals = await Promise.all((await this.journalIds()).map(async (journalId) => {
       try {
@@ -1363,6 +1387,21 @@ export class SkillReconciler {
       }
     }))
     return journals.filter((journal): journal is NonNullable<typeof journal> => journal !== null)
+  }
+
+  private async hideVisibleBackups(): Promise<void> {
+    for (const journal of await this.verifiedJournals()) {
+      for (const operation of journal.plan.operations) {
+        await this.assertJournalOperationSafe(operation, journal.plan.journalId)
+        const legacy = legacyBackupPath(operation.public.targetPath, journal.plan.journalId)
+        if (operation.backupPath !== legacy || (await fingerprint(legacy)).kind === 'missing') continue
+        const hidden = hiddenBackupPath(operation.public.targetPath, journal.plan.journalId)
+        if ((await fingerprint(hidden)).kind !== 'missing') continue
+        await rename(legacy, hidden)
+        await syncDirectory(path.dirname(legacy))
+        operation.backupPath = hidden
+      }
+    }
   }
 
   private async cleanupExpiredBackups(): Promise<void> {
@@ -1631,10 +1670,13 @@ export class SkillReconciler {
     ) {
       throw new Error('Journal path is outside the configured roots.')
     }
-    const expectedBackup = operation.public.before.kind === 'missing'
+    const hiddenBackup = operation.public.before.kind === 'missing'
       ? null
-      : `${operation.public.targetPath}.skillledger-${journalId}.backup`
-    if (operation.backupPath !== expectedBackup) {
+      : hiddenBackupPath(operation.public.targetPath, journalId)
+    const legacyBackup = operation.public.before.kind === 'missing'
+      ? null
+      : legacyBackupPath(operation.public.targetPath, journalId)
+    if (operation.backupPath !== hiddenBackup && operation.backupPath !== legacyBackup) {
       throw new Error('Journal backup escaped the configured root.')
     }
 
@@ -1643,6 +1685,15 @@ export class SkillReconciler {
     const resolvedTargetParent = await realpath(path.dirname(operation.public.targetPath))
     if (!isInside(resolvedHome, resolvedAgentRoot) || resolvedAgentRoot !== resolvedTargetParent) {
       throw new Error('Journal target parent escaped the configured root.')
+    }
+    if (
+      operation.backupPath === legacyBackup
+      && legacyBackup
+      && hiddenBackup
+      && (await fingerprint(legacyBackup)).kind === 'missing'
+      && (await fingerprint(hiddenBackup)).kind !== 'missing'
+    ) {
+      operation.backupPath = hiddenBackup
     }
   }
 

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { access, chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -582,6 +582,38 @@ describe('SkillReconciler', () => {
     })
     expect(await readFile(path.join(home, '.agents', 'skills', 'review-code', 'SKILL.md'), 'utf8'))
       .toContain('Updated safely.')
+    expect((await readdir(path.join(home, '.agents', 'skills')))
+      .filter((entry) => !entry.startsWith('.'))).toEqual(['review-code'])
+    const journalPlanPath = path.join(
+      home,
+      '.agents',
+      '.skillledger',
+      'journals',
+      updated.journalId,
+      'plan.json',
+    )
+    const journalPlan = JSON.parse(await readFile(journalPlanPath, 'utf8'))
+    const canonicalOperation = journalPlan.operations.find(
+      (operation: { public: { kind: string } }) => operation.public.kind === 'update-canonical',
+    )
+    const hiddenBackup = canonicalOperation.backupPath
+    const legacyBackup = `${path.join(home, '.agents', 'skills', 'review-code')}.skillledger-${updated.journalId}.backup`
+    expect(path.basename(hiddenBackup).startsWith('.')).toBe(true)
+
+    await rename(hiddenBackup, legacyBackup)
+    canonicalOperation.backupPath = legacyBackup
+    await writeFile(journalPlanPath, `${JSON.stringify(journalPlan, null, 2)}\n`)
+    const recreated = new SkillReconciler({
+      homeDir: home,
+      agentLocations: [{ id: 'codex', label: 'Codex', relativePath: '.codex/skills' }],
+      fetchSource,
+    })
+    await recreated.scan()
+    await expect(access(legacyBackup)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(hiddenBackup)).resolves.toBeUndefined()
+    expect((await readdir(path.join(home, '.agents', 'skills')))
+      .filter((entry) => !entry.startsWith('.'))).toEqual(['review-code'])
+
     const updatedLock = JSON.parse(await readFile(path.join(home, '.agents', '.skill-lock.json'), 'utf8'))
     expect(updatedLock.skills['review-code']).toMatchObject({
       repository: 'example/skills',
@@ -589,7 +621,7 @@ describe('SkillReconciler', () => {
       revision,
       sha256: update.sha256,
     })
-    expect((await reconciler.rollback(updated.journalId)).status).toBe('rolled-back')
+    expect((await recreated.rollback(updated.journalId)).status).toBe('rolled-back')
     expect(await readFile(path.join(home, '.agents', 'skills', 'review-code', 'SKILL.md'), 'utf8'))
       .toContain('Review safely.')
     const restoredLock = JSON.parse(await readFile(path.join(home, '.agents', '.skill-lock.json'), 'utf8'))
