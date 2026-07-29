@@ -23,6 +23,7 @@ const bridge: SkillLedgerBridge = {
   previewExternalSkill: (url) => invoke('previewExternalSkill', url),
   installExternalSkill: (planId) => invoke('installExternalSkill', planId),
   deleteSkill: (skillId) => invoke('deleteSkill', skillId),
+  openSkillSource: (skillId) => invoke('openSkillSource', skillId),
   checkSourceUpdates: () => invoke('checkSourceUpdates'),
   exportInventory: () => invoke('exportInventory'),
   getAppVersion: () => invoke('appVersion'),

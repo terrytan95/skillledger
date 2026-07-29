@@ -22,6 +22,7 @@ export const ipcChannels = {
   previewExternalSkill: 'skillledger:external:preview',
   installExternalSkill: 'skillledger:external:install',
   deleteSkill: 'skillledger:skill:delete',
+  openSkillSource: 'skillledger:skill:open-source',
   checkSourceUpdates: 'skillledger:source:check-updates',
   exportInventory: 'skillledger:inventory:export',
   reconcilePreview: 'skillledger:reconcile:preview',
@@ -52,6 +53,7 @@ export interface SkillLedgerIpcContract {
   previewExternalSkill: { args: [url: string]; result: ExternalSkillPreview }
   installExternalSkill: { args: [planId: string]; result: ApplyResult }
   deleteSkill: { args: [skillId: string]; result: ApplyResult }
+  openSkillSource: { args: [skillId: string]; result: void }
   checkSourceUpdates: { args: []; result: SourceUpdateSnapshot }
   exportInventory: { args: []; result: InventoryExportResult }
   reconcilePreview: { args: [request?: ReconcileRequest]; result: ReconciliationPreview }
@@ -88,6 +90,7 @@ export interface SkillLedgerBridge {
   previewExternalSkill: IpcMethod<'previewExternalSkill'>
   installExternalSkill: IpcMethod<'installExternalSkill'>
   deleteSkill: IpcMethod<'deleteSkill'>
+  openSkillSource: IpcMethod<'openSkillSource'>
   checkSourceUpdates: IpcMethod<'checkSourceUpdates'>
   exportInventory: IpcMethod<'exportInventory'>
   getAppVersion: IpcMethod<'appVersion'>

@@ -150,6 +150,12 @@ function registerIpc(): void {
   handleIpc('previewExternalSkill', (value) => reconciler.previewExternalSkill(parseExternalSkillUrl(value)))
   handleIpc('installExternalSkill', (value) => reconciler.apply(parseOpaqueId(value)))
   handleIpc('deleteSkill', (value) => reconciler.deleteSkill(parseSkillId(value)))
+  handleIpc('openSkillSource', async (value) => {
+    const skillId = parseSkillId(value)
+    const skill = (await reconciler.scan()).skills.find((entry) => entry.id === skillId)
+    if (!skill?.sourcePin || !skill.sourceUrl) throw new Error('Skill has no pinned GitHub source')
+    await shell.openExternal(skill.sourceUrl)
+  })
   handleIpc('checkSourceUpdates', async () => {
     const snapshot = await reconciler.scan()
     const pins = Object.fromEntries(
