@@ -1374,6 +1374,9 @@ export class SkillReconciler {
     const journals = await Promise.all((await this.journalIds()).map(async (journalId) => {
       try {
         const journal = await this.readJournal(journalId)
+        await Promise.all(journal.plan.operations.map((operation) => (
+          this.assertJournalOperationSafe(operation, journalId)
+        )))
         const statuses = new Set(journal.events.map((event) => event.status))
         return statuses.has('verified')
           && !statuses.has('rollback-complete')
