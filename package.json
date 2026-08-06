@@ -22,7 +22,7 @@
     "build:app": "yarn typecheck && vite build",
     "package": "yarn build:app && electron-builder --dir -c.forceCodeSigning=false -c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.notarize=false",
     "predist": "node script/verify-macos-release.mjs",
-    "dist": "yarn build:app && electron-builder",
+    "dist": "yarn build:app && electron-builder -c.mac.identity='AgentBar Local Code Signing'",
     "preview": "vite preview"
   },
   "devDependencies": {
