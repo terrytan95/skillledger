@@ -282,6 +282,7 @@ export const InventoryWorkspace = forwardRef<InventoryWorkspaceHandle, Inventory
     const skills = useMemo(() => {
       const normalized = query.trim().toLowerCase()
       return snapshot.skills.filter((skill) => {
+        if (skill.agents.length === 0) return false
         const matchesHealth = health === 'all'
           || (health === 'needs-review' ? skill.health !== 'healthy' : skill.health === health)
         const matchesQuery = !normalized || `${skill.name} ${skill.description} ${skill.source ?? ''}`.toLowerCase().includes(normalized)
